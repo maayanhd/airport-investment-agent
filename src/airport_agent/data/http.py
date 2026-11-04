@@ -6,10 +6,20 @@ from collections.abc import Callable, Mapping
 import httpx
 
 USER_AGENT = "airport-investment-agent/0.1 (+https://github.com/maayanhd/airport-investment-agent)"
+HTTP_TOO_MANY_REQUESTS = 429
+HTTP_SERVER_ERROR = 500
 
 
 class FetchError(Exception):
-    """A source could not be fetched after all retries."""
+    """A source could not be fetched."""
+
+
+def _is_retryable(error: httpx.HTTPError) -> bool:
+    """Retry network trouble, server errors and rate limits. Never retry a 404 or 403."""
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        return status >= HTTP_SERVER_ERROR or status == HTTP_TOO_MANY_REQUESTS
+    return isinstance(error, httpx.TransportError)
 
 
 class HttpFetcher:
@@ -29,15 +39,17 @@ class HttpFetcher:
         self._sleep = sleep
 
     def get_text(self, url: str, params: Mapping[str, str] | None = None) -> str:
-        last_error: Exception | None = None
-        for attempt in range(self._retries + 1):
+        attempts = 0
+        while True:
+            attempts += 1
             try:
                 response = self._client.get(url, params=params)
                 response.raise_for_status()
             except httpx.HTTPError as error:
-                last_error = error
-                if attempt < self._retries:
-                    self._sleep(self._backoff * 2**attempt)
+                if not _is_retryable(error) or attempts > self._retries:
+                    raise FetchError(
+                        f"GET {url} failed after {attempts} attempt(s): {error}"
+                    ) from error
+                self._sleep(self._backoff * 2 ** (attempts - 1))
             else:
                 return response.text
-        raise FetchError(f"GET {url} failed after {self._retries + 1} attempts: {last_error}")

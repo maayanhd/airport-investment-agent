@@ -1,5 +1,6 @@
 """Live-first fetching with snapshot fallback, always reporting provenance."""
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -7,6 +8,9 @@ from datetime import UTC, datetime
 from airport_agent.data.http import FetchError
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.domain import DataMode, Provenance
+
+logger = logging.getLogger(__name__)
+MAX_NOTE_CHARS = 200
 
 
 class DataUnavailableError(Exception):
@@ -38,8 +42,10 @@ class DataProvider:
         try:
             text = live()
             validate(text)
-        except (FetchError, ValueError):
-            return self._from_snapshot(name, source)
+        except (FetchError, ValueError) as error:
+            reason = f"{type(error).__name__}: {error}"[:MAX_NOTE_CHARS]
+            logger.warning("%s: live data rejected, using snapshot (%s)", source, reason)
+            return self._from_snapshot(name, source, reason)
         if self._persist_live:
             self._store.save(name, text, source=source, as_of=as_of)
         provenance = Provenance(
@@ -47,15 +53,18 @@ class DataProvider:
         )
         return Fetched(text, provenance)
 
-    def _from_snapshot(self, name: str, source: str) -> Fetched:
+    def _from_snapshot(self, name: str, source: str, reason: str) -> Fetched:
         loaded = self._store.load(name)
         if loaded is None:
-            raise DataUnavailableError(f"{source}: live fetch failed and no snapshot for {name}")
+            raise DataUnavailableError(
+                f"{source}: live data unusable ({reason}) and no valid snapshot for {name}"
+            )
         text, entry = loaded
         provenance = Provenance(
             source=source,
             mode=DataMode.SNAPSHOT,
             fetched_at=entry.fetched_at,
             as_of=entry.as_of,
+            note=f"live data unavailable, snapshot used ({reason})",
         )
         return Fetched(text, provenance)

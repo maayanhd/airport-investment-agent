@@ -20,7 +20,7 @@ def test_coverage_is_unique_iata_codes_including_required_airports() -> None:
     assert len(coverage) == len(set(coverage))
 
 
-@pytest.mark.parametrize("bad", [["ANC", "ANC"], ["anc"], ["ANCH"]])
+@pytest.mark.parametrize("bad", [["ANC", "ANC"], ["anc"], ["ANCH"], ["A1B"], ["ÄÖÜ"], [" BO"]])
 def test_invalid_coverage_rejected(bad: list[str]) -> None:
     data = load_settings().model_dump()
     data["coverage_airports"] = bad

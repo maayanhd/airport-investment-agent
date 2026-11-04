@@ -1,11 +1,13 @@
 """Single source for thresholds, weights and model ids (DRY: no magic numbers elsewhere)."""
 
+import re
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-IATA_LENGTH = 3
+from airport_agent.domain import IATA_PATTERN
+
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
 
 
@@ -22,9 +24,7 @@ class Settings(BaseModel):
     @field_validator("coverage_airports")
     @classmethod
     def _valid_unique_codes(cls, codes: list[str]) -> list[str]:
-        if len(set(codes)) != len(codes) or any(
-            len(c) != IATA_LENGTH or not c.isupper() for c in codes
-        ):
+        if len(set(codes)) != len(codes) or any(not re.fullmatch(IATA_PATTERN, c) for c in codes):
             raise ValueError("coverage_airports must be unique 3-letter uppercase IATA codes")
         return codes
 

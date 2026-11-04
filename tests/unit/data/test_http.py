@@ -33,3 +33,20 @@ def test_raises_fetch_error_after_exhausting_retries() -> None:
     respx.get(URL).mock(side_effect=httpx.ConnectError("down"))
     with pytest.raises(FetchError):
         make_fetcher([]).get_text(URL)
+
+
+@respx.mock
+def test_permanent_client_error_is_not_retried() -> None:
+    route = respx.get(URL).respond(404)
+    sleeps: list[float] = []
+    with pytest.raises(FetchError):
+        make_fetcher(sleeps).get_text(URL)
+    assert route.call_count == 1
+    assert sleeps == []
+
+
+@respx.mock
+def test_rate_limit_is_retried() -> None:
+    route = respx.get(URL).mock(side_effect=[httpx.Response(429), httpx.Response(200, text="ok")])
+    assert make_fetcher([]).get_text(URL) == "ok"
+    assert route.call_count == 2

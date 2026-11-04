@@ -2,8 +2,12 @@
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+IATA_PATTERN = r"[A-Z]{3}"
+STATE_PATTERN = r"[A-Z]{2}"
 
 
 class DataMode(StrEnum):
@@ -20,14 +24,15 @@ class Provenance(BaseModel):
     mode: DataMode
     fetched_at: datetime
     as_of: str = ""
+    note: str = ""  # why a snapshot was used instead of live data, if it was
 
 
 class Airport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    iata: str
+    iata: str = Field(pattern=f"^{IATA_PATTERN}$")
     name: str
-    state: str
+    state: str = Field(pattern=f"^{STATE_PATTERN}$")
     latitude: float
     longitude: float
-    size: str
+    size: Literal["large", "medium", "small"]

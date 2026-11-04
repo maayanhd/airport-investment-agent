@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import respx
 
 from airport_agent.data.catalog import OURAIRPORTS_URL, OurAirportsCatalog, parse_airports
@@ -50,3 +51,40 @@ def test_error_page_with_200_keeps_last_good_snapshot(tmp_path: Path) -> None:
 
     assert catalog.provenance.mode is DataMode.SNAPSHOT
     assert catalog.get("ANC") is not None
+
+
+@pytest.mark.parametrize(
+    "bad_text",
+    [
+        SAMPLE.rsplit("\n", 3)[0] + '\n3,"KBDL","medium_airport","Bradley"\n',  # truncated row
+        SAMPLE.replace("latitude_deg", "lat"),  # a used column is gone
+        SAMPLE.replace('"US-AK","ANC"', '"US-AK"'),  # ragged row: iata missing
+        "<html>Service unavailable</html>",
+    ],
+)
+def test_malformed_content_raises_only_value_error(bad_text: str) -> None:
+    with pytest.raises(ValueError, match="airports|OurAirports|covered"):
+        parse_airports(bad_text, ["ANC", "BOS", "BDL"])
+
+
+@respx.mock
+def test_truncated_live_file_falls_back_to_snapshot(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
+    route = respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
+    OurAirportsCatalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+
+    route.respond(200, text=SAMPLE.rsplit("\n", 3)[0] + '\n3,"KBDL","medium_airport","Bradley"\n')
+    catalog = OurAirportsCatalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+    assert catalog.provenance.mode is DataMode.SNAPSHOT
+    assert "snapshot used" in catalog.provenance.note
+    assert catalog.get("BOS") is not None
+
+
+@respx.mock
+def test_codes_missing_from_data_are_reported(tmp_path: Path) -> None:
+    respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
+    fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
+    catalog = OurAirportsCatalog(DataProvider(SnapshotStore(tmp_path)), fetcher, ["ANC", "ZZZ"])
+    assert catalog.missing_codes == ["ZZZ"]
+    assert catalog.get("ZZZ") is None
