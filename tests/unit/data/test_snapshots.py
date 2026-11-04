@@ -1,4 +1,7 @@
+import logging
 from pathlib import Path
+
+import pytest
 
 from airport_agent.data.snapshots import SnapshotStore
 
@@ -11,7 +14,6 @@ def test_save_then_load_roundtrip_with_manifest(tmp_path: Path) -> None:
     text, loaded_entry = loaded
     assert text == "h\n1\n2\n"
     assert loaded_entry == entry
-    assert entry.lines == 2
     assert entry.as_of == "2026-07"
     assert len(entry.sha256) == 64
 
@@ -55,3 +57,18 @@ def test_crlf_content_roundtrips_with_matching_checksum(tmp_path: Path) -> None:
 def test_save_leaves_no_temp_files(tmp_path: Path) -> None:
     SnapshotStore(tmp_path).save("t.csv", "h\n1\n", source="BTS")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["manifest.json", "t.csv"]
+
+
+def test_unreadable_manifest_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store = SnapshotStore(tmp_path)
+    store.save("a.csv", "h\n1\n", source="A")
+    (tmp_path / "manifest.json").write_text("{broken", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert store.load("a.csv") is None
+    assert "manifest unreadable" in caplog.text
+
+
+def test_missing_manifest_is_silent(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        assert SnapshotStore(tmp_path).load("a.csv") is None
+    assert caplog.text == ""

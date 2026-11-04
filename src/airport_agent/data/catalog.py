@@ -53,19 +53,16 @@ def parse_airports(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
 
 
 class OurAirportsCatalog:
-    def __init__(self, provider: DataProvider, fetcher: HttpFetcher, coverage: Iterable[str]):
-        wanted = tuple(coverage)
-        fetched = provider.fetch_text(
-            SNAPSHOT_NAME,
-            source=SOURCE,
-            live=lambda: fetcher.get_text(OURAIRPORTS_URL),
-            validate=lambda text: parse_airports(text, wanted),
-        )
-        self._airports = parse_airports(fetched.text, wanted)
-        self.provenance: Provenance = fetched.provenance
+    """Pure lookups over already-parsed airports; `load_catalog` does the I/O."""
+
+    def __init__(
+        self, airports: dict[str, Airport], provenance: Provenance, coverage: Iterable[str]
+    ) -> None:
+        self._airports = airports
+        self.provenance = provenance
         # Covered codes the data does not contain: callers must say "not in the data",
         # not "not covered" (they cannot be told apart from `get() is None` alone).
-        self.missing_codes: list[str] = sorted({c.upper() for c in wanted} - self._airports.keys())
+        self.missing_codes: list[str] = sorted({c.upper() for c in coverage} - airports.keys())
 
     def get(self, iata: str) -> Airport | None:
         return self._airports.get(iata.upper())
@@ -74,8 +71,18 @@ class OurAirportsCatalog:
         wanted = {state.upper() for state in states}
         return sorted((a for a in self._airports.values() if a.state in wanted), key=_by_iata)
 
-    def all(self) -> list[Airport]:
-        return sorted(self._airports.values(), key=_by_iata)
+
+def load_catalog(
+    provider: DataProvider, fetcher: HttpFetcher, coverage: Iterable[str]
+) -> OurAirportsCatalog:
+    wanted = tuple(coverage)
+    fetched = provider.fetch(
+        SNAPSHOT_NAME,
+        source=SOURCE,
+        live=lambda: fetcher.get_text(OURAIRPORTS_URL),
+        parse=lambda text: parse_airports(text, wanted),
+    )
+    return OurAirportsCatalog(fetched.value, fetched.provenance, wanted)
 
 
 def _by_iata(airport: Airport) -> str:

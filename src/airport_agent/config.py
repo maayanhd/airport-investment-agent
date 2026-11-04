@@ -18,7 +18,6 @@ class Settings(BaseModel):
     min_confidence: float = Field(ge=0, le=1)
     router_model: str
     judge_model: str
-    max_data_age_months: int = Field(gt=0)
     coverage_airports: list[str]
 
     @field_validator("coverage_airports")

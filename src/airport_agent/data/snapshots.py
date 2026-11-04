@@ -5,18 +5,20 @@ hand-edited file can never be served as trusted data."""
 
 import hashlib
 import json
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+logger = logging.getLogger(__name__)
+
 
 class SnapshotEntry(BaseModel):
     source: str
     fetched_at: datetime
     as_of: str
-    lines: int  # data lines after the header; informational only
     sha256: str
 
 
@@ -40,7 +42,6 @@ class SnapshotStore:
             source=source,
             fetched_at=datetime.now(UTC),
             as_of=as_of,
-            lines=max(len(text.splitlines()) - 1, 0),
             sha256=hashlib.sha256(data).hexdigest(),
         )
         manifest = self._read_manifest()
@@ -60,12 +61,16 @@ class SnapshotStore:
         return data.decode("utf-8"), entry
 
     def _read_manifest(self) -> dict[str, SnapshotEntry]:
-        """A missing or unreadable manifest counts as empty, so the next save repairs it."""
+        """A missing manifest is empty. An unreadable one also counts as empty so the next save
+        repairs it, but that drops the other entries, so it is logged."""
         path = self._root / self.MANIFEST
+        if not path.exists():
+            return {}
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             return {name: SnapshotEntry.model_validate(item) for name, item in raw.items()}
-        except (OSError, ValueError, AttributeError, ValidationError):
+        except (OSError, ValueError, AttributeError, ValidationError) as error:
+            logger.warning("snapshot manifest unreadable, treating as empty (%s)", error)
             return {}
 
     def _write_manifest(self, manifest: dict[str, SnapshotEntry]) -> None:
