@@ -9,3 +9,4 @@ __pycache__/
 htmlcov/
 data/raw/
 *.egg-info/
+data/snapshots/ourairports_airports.csv

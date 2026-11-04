@@ -19,6 +19,8 @@ class Settings(BaseModel):
     router_model: str
     judge_model: str
     coverage_airports: list[str]
+    snapshot_dir: Path
+    traffic_history_months: int = Field(ge=13)
 
     @field_validator("coverage_airports")
     @classmethod

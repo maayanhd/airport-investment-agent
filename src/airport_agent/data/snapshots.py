@@ -51,6 +51,9 @@ class SnapshotStore:
 
         return entry
 
+    def entries(self) -> dict[str, SnapshotEntry]:
+        return self._read_manifest()
+
     def load(self, name: str) -> tuple[str, SnapshotEntry] | None:
         entry = self._read_manifest().get(name)
         path = self._root / name

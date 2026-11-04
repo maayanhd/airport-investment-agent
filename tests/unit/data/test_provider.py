@@ -27,7 +27,7 @@ class UnwritableStore(SnapshotStore):
 def test_live_success_is_marked_live_and_persisted(tmp_path: Path) -> None:
     store = SnapshotStore(tmp_path)
     result = DataProvider(store).fetch(
-        "x.csv", source="S", live=lambda: "h\n1\n", parse=str, as_of="2026-07"
+        "x.csv", source="S", live=lambda: "h\n1\n", parse=str, as_of=lambda _: "2026-07"
     )
     assert result.provenance.mode is DataMode.LIVE
     assert result.provenance.as_of == "2026-07"

@@ -18,7 +18,8 @@ Out of scope: non-US airports, financial returns, forecasts we cannot support fr
 | Source | Used for | Status |
 |---|---|---|
 | OurAirports `airports.csv` (public domain) | airport identity, state, location, size | implemented (`data/catalog.py`) |
-| BTS flight and passenger data | traffic, capacity, load factor, delays | _TBD (M1)_ |
+| BTS T-100 summary by origin airport (Socrata API, no key) | monthly departures, passengers, seats, load factor, average flight distance | implemented (`data/traffic.py`) |
+| BTS On-Time Reporting (bulk monthly zips) | delays and cancellations | _TBD (next PR)_ |
 
 How data is fetched (`data/`):
 - **Live first, snapshot fallback.** Every result carries provenance: source, `live` or `snapshot`, fetch time, data month, and a note with the reason when a snapshot was used.

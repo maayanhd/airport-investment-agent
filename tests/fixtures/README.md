@@ -12,3 +12,11 @@
 To refresh, repeat the download and `grep` the same ids. If OurAirports changes its columns,
 this fixture is what should make the test suite fail. Malformed-input cases are built in the
 tests from this file and are clearly constructed there.
+
+## bts_t100_sample.json
+
+The response of the BTS T-100 "summary by origin airport" dataset (`r495-tyji`, public domain,
+https://data.bts.gov/resource/r495-tyji.json), fetched on 2026-11-04 with the same `$select`
+the adapter sends. It holds ANC, BOS and SNA for 2026-04 to 2026-07, 12 rows, values
+unmodified; only the whitespace is reformatted. The API returns every number as a string, and
+this fixture keeps that, so the contract test fails if BTS renames a column or changes a type.

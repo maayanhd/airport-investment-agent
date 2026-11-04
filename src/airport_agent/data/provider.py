@@ -15,6 +15,10 @@ MAX_NOTE_CHARS = 200
 T = TypeVar("T")
 
 
+def _no_as_of(_value: object) -> str:
+    return ""
+
+
 class DataUnavailableError(Exception):
     """Neither the live source nor a snapshot could provide the data."""
 
@@ -36,7 +40,7 @@ class DataProvider:
         source: str,
         live: Callable[[], str],
         parse: Callable[[str], T],
-        as_of: str = "",
+        as_of: Callable[[T], str] = _no_as_of,
     ) -> Fetched[T]:
         try:
             text = live()
@@ -47,10 +51,11 @@ class DataProvider:
 
             return self._from_snapshot(name, source, reason, parse)
 
-        self._try_save(name, text, source, as_of)
+        data_month = as_of(value)
+        self._try_save(name, text, source, data_month)
 
         provenance = Provenance(
-            source=source, mode=DataMode.LIVE, fetched_at=datetime.now(UTC), as_of=as_of
+            source=source, mode=DataMode.LIVE, fetched_at=datetime.now(UTC), as_of=data_month
         )
 
         return Fetched(value, provenance)
