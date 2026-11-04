@@ -1,8 +1,0 @@
-pyproject.toml
-src/airport_agent/__init__.py
-src/airport_agent/config.py
-src/airport_agent.egg-info/PKG-INFO
-src/airport_agent.egg-info/SOURCES.txt
-src/airport_agent.egg-info/dependency_links.txt
-src/airport_agent.egg-info/requires.txt
-src/airport_agent.egg-info/top_level.txt

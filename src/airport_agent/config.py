@@ -1,9 +1,12 @@
 """Single source for thresholds, weights and model ids (DRY: no magic numbers elsewhere)."""
 
+import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from airport_agent.domain import IATA_PATTERN
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
 
@@ -15,6 +18,14 @@ class Settings(BaseModel):
     min_confidence: float = Field(ge=0, le=1)
     router_model: str
     judge_model: str
+    coverage_airports: list[str]
+
+    @field_validator("coverage_airports")
+    @classmethod
+    def _valid_unique_codes(cls, codes: list[str]) -> list[str]:
+        if len(set(codes)) != len(codes) or any(not re.fullmatch(IATA_PATTERN, c) for c in codes):
+            raise ValueError("coverage_airports must be unique 3-letter uppercase IATA codes")
+        return codes
 
 
 def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
