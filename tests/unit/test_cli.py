@@ -13,6 +13,7 @@ from airport_agent import cli
 from airport_agent.cli import main
 from airport_agent.config import load_settings
 from airport_agent.data.history import History
+from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import BTS_URL, SNAPSHOT_NAME
 from airport_agent.domain import DataMode, Provenance
 
@@ -274,3 +275,33 @@ def test_refresh_warns_when_even_the_fresh_data_is_stale(
 
     assert main(["data", "refresh", "delays"], root=tmp_path, settings=SETTINGS) == 0
     assert "warning: stale: data month 2025-01" in capsys.readouterr().out
+
+
+@respx.mock
+def test_refresh_fails_when_the_snapshot_cannot_be_written(
+    tmp_path: Path, capsys: Out, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("read-only folder")
+
+    monkeypatch.setattr(SnapshotStore, "save", refuse)
+
+    assert _run("refresh", root=tmp_path) == 1
+
+    output = capsys.readouterr().out
+
+    assert "could not write the snapshot" in output
+    assert "saved BTS" not in output
+
+
+@respx.mock
+def test_status_marks_an_old_snapshot_stale(tmp_path: Path, capsys: Out) -> None:
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+    _run("refresh", root=tmp_path)
+    capsys.readouterr()
+    old = SETTINGS.model_copy(update={"max_data_age_months": 0})
+
+    assert main(["data", "status"], root=tmp_path, settings=old) == 0
+    assert "STALE" in capsys.readouterr().out

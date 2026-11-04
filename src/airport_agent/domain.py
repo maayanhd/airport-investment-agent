@@ -26,6 +26,7 @@ class Provenance(BaseModel):
     as_of: str = ""
     note: str = ""  # why a snapshot was used instead of live data, if it was
     stale: bool = False  # the data month is older than the configured limit
+    save_failed: bool = False  # live data was good but could not be written to the snapshot
 
 
 class Airport(BaseModel):

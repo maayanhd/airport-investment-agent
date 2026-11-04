@@ -212,7 +212,7 @@ def test_load_reads_only_the_snapshot_and_never_the_network(tmp_path: Path) -> N
     _refresh(store)
     respx.clear()  # any request from here on would fail the test
 
-    history = load_delays(DataProvider(store), SETTINGS)
+    history = load_delays(DataProvider(store), SETTINGS, today=date(2026, 9, 10))
 
     assert history.provenance.mode is DataMode.SNAPSHOT
     assert history.provenance.note == ""

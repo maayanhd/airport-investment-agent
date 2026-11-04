@@ -62,15 +62,28 @@ def require_enough(
         )
 
 
-def check_age(provenance: Provenance, *, max_age_months: int, today: date) -> Provenance:
-    """Flag data whose month is older than the limit, and say how old it is."""
-    year, month = (int(part) for part in provenance.as_of.split("-"))
-    age = (today.year - year) * 12 + today.month - month
+def data_age_months(as_of: str, today: date) -> int | None:
+    """Months between the data month ("YYYY-MM") and today, or None if it cannot be read."""
+    try:
+        year, month = (int(part) for part in as_of.split("-"))
+    except ValueError:
+        return None
 
-    if age <= max_age_months:
+    return (today.year - year) * 12 + today.month - month
+
+
+def check_age(provenance: Provenance, *, max_age_months: int, today: date) -> Provenance:
+    """Flag data whose month is older than the limit or unknown, and say why."""
+    age = data_age_months(provenance.as_of, today)
+
+    if age is not None and age <= max_age_months:
         return provenance
 
-    warning = f"stale: data month {provenance.as_of} is {age} months old (limit {max_age_months})"
+    warning = (
+        "stale: data month unknown"
+        if age is None
+        else f"stale: data month {provenance.as_of} is {age} months old (limit {max_age_months})"
+    )
     note = f"{provenance.note}; {warning}" if provenance.note else warning
 
     return provenance.model_copy(update={"note": note, "stale": True})

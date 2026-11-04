@@ -31,6 +31,14 @@ def test_stale_note_is_appended_to_an_existing_note() -> None:
     assert checked.note.startswith("live data unavailable; stale: data month 2025-01 is 12")
 
 
+@pytest.mark.parametrize("as_of", ["", "garbage", "2026"])
+def test_unreadable_data_month_is_flagged_not_a_crash(as_of: str) -> None:
+    checked = check_age(_provenance(as_of), max_age_months=6, today=date(2026, 9, 1))
+
+    assert checked.stale
+    assert "data month unknown" in checked.note
+
+
 def test_history_lists_missing_and_short_airports() -> None:
     series = {"AAA": [1, 2, 3], "BBB": [1]}
     history = History(series, _provenance("2026-07"), ["AAA", "BBB", "CCC"], min_months=2)

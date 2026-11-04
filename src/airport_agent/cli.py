@@ -2,12 +2,13 @@
 
 import argparse
 from collections.abc import Callable, Sequence
+from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
 from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
 from airport_agent.data.delays import load_delays, refresh_delays
-from airport_agent.data.history import History
+from airport_agent.data.history import History, data_age_months
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
 from airport_agent.data.snapshots import SnapshotStore
@@ -18,7 +19,7 @@ ROOT = DEFAULT_CONFIG_PATH.parent
 SHOWN_MONTHS = 6
 
 
-def _status(store: SnapshotStore) -> int:
+def _status(store: SnapshotStore, settings: Settings) -> int:
     entries = store.entries()
 
     if not entries:
@@ -31,6 +32,10 @@ def _status(store: SnapshotStore) -> int:
         valid = store.load(name) is not None
         invalid += not valid
         health = "ok" if valid else "INVALID (file missing or bad checksum)"
+        age = data_age_months(entry.as_of, date.today())
+
+        if age is None or age > settings.max_data_age_months:
+            health += " | STALE"
 
         print(
             f"{name}: {entry.source} | data month {entry.as_of or 'n/a'} | fetched {fetched}"
@@ -62,6 +67,11 @@ def _refresh(which: RefreshSource, settings: Settings, store: SnapshotStore) -> 
         return 1
 
     source = history.provenance
+
+    if source.save_failed:
+        print(f"downloaded but could not write the snapshot: {source.note}")
+
+        return 1
 
     if source.mode is not DataMode.LIVE:
         print(f"refresh failed, snapshot unchanged: {source.note}")
@@ -192,7 +202,7 @@ def main(
     store = SnapshotStore(root / settings.snapshot_dir)
 
     if args.action == "status":
-        return _status(store)
+        return _status(store, settings)
 
     if args.action == "refresh":
         return _refresh(args.source, settings, store)
