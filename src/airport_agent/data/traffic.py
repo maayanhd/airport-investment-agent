@@ -56,16 +56,7 @@ def _read_rows(text: str) -> list[_Row]:
         raise ValueError(f"BTS {where}: {first['msg']} ({problems} problem(s))") from error
 
 
-def parse_traffic(
-    text: str, coverage: Iterable[str], *, min_months: int, min_airport_share: float
-) -> dict[str, list[MonthlyTraffic]]:
-    """Raises ValueError, and only ValueError, on unusable, truncated or too-thin content."""
-    wanted = {code.upper() for code in coverage}
-    rows = _read_rows(text)
-
-    if len(rows) >= MAX_ROWS:
-        raise ValueError(f"BTS response reached the {MAX_ROWS} row limit and may be truncated")
-
+def _group_by_airport(rows: list[_Row], wanted: set[str]) -> dict[str, list[MonthlyTraffic]]:
     series: dict[str, list[MonthlyTraffic]] = defaultdict(list)
 
     for row in rows:
@@ -78,15 +69,35 @@ def parse_traffic(
         if len({m.month for m in months}) != len(months):
             raise ValueError(f"duplicate months for {code} in BTS response")
 
+    return dict(series)
+
+
+def _require_enough_airports(
+    series: dict[str, list[MonthlyTraffic]], wanted: set[str], min_months: int, min_share: float
+) -> None:
     complete = sum(len(months) >= min_months for months in series.values())
 
-    if complete < min_airport_share * len(wanted):
+    if complete < min_share * len(wanted):
         raise ValueError(
             f"BTS response too thin: {complete} of {len(wanted)} covered airports have "
-            f"{min_months}+ months (need {min_airport_share:.0%})"
+            f"{min_months}+ months (need {min_share:.0%})"
         )
 
-    return dict(series)
+
+def parse_traffic(
+    text: str, coverage: Iterable[str], *, min_months: int, min_airport_share: float
+) -> dict[str, list[MonthlyTraffic]]:
+    """Raises ValueError, and only ValueError, on unusable, truncated or too-thin content."""
+    wanted = {code.upper() for code in coverage}
+    rows = _read_rows(text)
+
+    if len(rows) >= MAX_ROWS:
+        raise ValueError(f"BTS response reached the {MAX_ROWS} row limit and may be truncated")
+
+    series = _group_by_airport(rows, wanted)
+    _require_enough_airports(series, wanted, min_months, min_airport_share)
+
+    return series
 
 
 class TrafficHistory:
