@@ -39,7 +39,7 @@ def _status(store: SnapshotStore) -> int:
 
 def _load(settings: Settings, store: SnapshotStore, *, persist: bool) -> TrafficHistory | None:
     try:
-        return load_traffic(DataProvider(store), HttpFetcher(), settings, persist=persist)
+        return load_traffic(DataProvider(store, persist=persist), HttpFetcher(), settings)
     except DataUnavailableError as error:
         print(error)
 

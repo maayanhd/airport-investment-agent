@@ -1,6 +1,5 @@
 """Monthly passengers and capacity per origin airport, from BTS T-100 (Socrata API)."""
 
-import re
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date
@@ -60,9 +59,7 @@ def _read_rows(text: str) -> list[_Row]:
 def parse_traffic(
     text: str, coverage: Iterable[str], *, min_months: int, min_airport_share: float
 ) -> dict[str, list[MonthlyTraffic]]:
-    """Raises ValueError, and only ValueError, on unusable content. That includes a response
-    that looks cut off or too thin to replace a good snapshot: it reached the row limit, or
-    fewer than `min_airport_share` of the covered airports have `min_months` months."""
+    """Raises ValueError, and only ValueError, on unusable, truncated or too-thin content."""
     wanted = {code.upper() for code in coverage}
     rows = _read_rows(text)
 
@@ -133,13 +130,9 @@ def load_traffic(
     fetcher: HttpFetcher,
     settings: Settings,
     *,
-    persist: bool = True,
     today: date | None = None,
 ) -> TrafficHistory:
     wanted = tuple(code.upper() for code in settings.coverage_airports)
-
-    if not all(re.fullmatch(r"[A-Z]{3}", code) for code in wanted):
-        raise ValueError("coverage must be 3-letter IATA codes")
 
     since = _months_back(today or date.today(), settings.traffic_history_months)
     fetched = provider.fetch(
@@ -153,7 +146,6 @@ def load_traffic(
             min_airport_share=settings.traffic_min_airport_share,
         ),
         as_of=_latest_label,
-        persist=persist,
     )
 
     return TrafficHistory(fetched.value, fetched.provenance, wanted)

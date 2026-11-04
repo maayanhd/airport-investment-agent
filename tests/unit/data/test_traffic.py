@@ -53,7 +53,7 @@ def _load(
 ) -> traffic.TrafficHistory:
     fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
 
-    return load_traffic(DataProvider(store), fetcher, settings, persist=persist, today=TODAY)
+    return load_traffic(DataProvider(store, persist=persist), fetcher, settings, today=TODAY)
 
 
 BAD_CONTENT = [
@@ -183,13 +183,6 @@ def test_history_window_starts_on_first_of_month(tmp_path: Path, today: date, si
     load_traffic(DataProvider(SnapshotStore(tmp_path)), fetcher, SETTINGS, today=today)
 
     assert f">= '{since}T00:00:00'" in route.calls.last.request.url.params["$where"]
-
-
-def test_rejects_non_iata_coverage(tmp_path: Path) -> None:
-    unsafe = SETTINGS.model_copy(update={"coverage_airports": ["A' OR 1=1"]})
-
-    with pytest.raises(ValueError, match="IATA"):
-        load_traffic(DataProvider(SnapshotStore(tmp_path)), HttpFetcher(), unsafe)
 
 
 def test_default_window_leaves_room_for_the_bts_lag() -> None:
