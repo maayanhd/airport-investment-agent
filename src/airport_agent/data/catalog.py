@@ -45,19 +45,18 @@ def parse_airports(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
 
     airports: dict[str, Airport] = {}
 
-    try:
-        for row in reader:
-            # A short row has None values, a long one has extras under the key None. Either
-            # shifts the columns, so a row could be dropped or misread without any error.
-            if None in row or None in row.values():
-                raise ValueError(f"ragged row in airports.csv (line {reader.line_num})")
+    for row in reader:
+        # A short row has None values, a long one has extras under the key None. Either
+        # shifts the columns, so a row could be dropped or misread without any error. With
+        # this check and the column check above, every used field is a str, so the only
+        # errors left are bad numbers or values, and both are ValueError.
+        if None in row or None in row.values():
+            raise ValueError(f"ragged row in airports.csv (line {reader.line_num})")
 
-            airport = _to_airport(row, wanted)
+        airport = _to_airport(row, wanted)
 
-            if airport is not None:
-                airports[airport.iata] = airport
-    except (TypeError, AttributeError, KeyError) as error:
-        raise ValueError(f"malformed or truncated row in airports.csv: {error!r}") from error
+        if airport is not None:
+            airports[airport.iata] = airport
 
     if not airports:
         raise ValueError("no covered airport found in airports.csv")

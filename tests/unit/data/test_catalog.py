@@ -71,6 +71,11 @@ def test_malformed_content_raises_only_value_error(bad_text: str) -> None:
         parse_airports(bad_text, ["ANC", "BOS", "BDL"])
 
 
+def test_no_covered_airport_in_file_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="no covered airport"):
+        parse_airports(SAMPLE, ["SFO"])  # SFO is not in the excerpt
+
+
 @respx.mock
 def test_truncated_live_file_falls_back_to_snapshot(tmp_path: Path) -> None:
     store = SnapshotStore(tmp_path)
