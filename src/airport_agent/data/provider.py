@@ -46,11 +46,15 @@ class DataProvider:
         except (FetchError, ValueError) as error:
             reason = f"{type(error).__name__}: {error}"[:MAX_NOTE_CHARS]
             logger.warning("%s: live data rejected, using snapshot (%s)", source, reason)
+
             return self._from_snapshot(name, source, reason, parse)
+
         self._try_save(name, text, source, as_of)
+
         provenance = Provenance(
             source=source, mode=DataMode.LIVE, fetched_at=datetime.now(UTC), as_of=as_of
         )
+
         return Fetched(value, provenance)
 
     def _try_save(self, name: str, text: str, source: str, as_of: str) -> None:
@@ -64,17 +68,21 @@ class DataProvider:
         self, name: str, source: str, reason: str, parse: Callable[[str], T]
     ) -> Fetched[T]:
         loaded = self._store.load(name)
+
         if loaded is None:
             raise DataUnavailableError(
                 f"{source}: live data unusable ({reason}) and no valid snapshot for {name}"
             )
+
         text, entry = loaded
+
         try:
             value = parse(text)
         except ValueError as error:
             raise DataUnavailableError(
                 f"{source}: live data unusable ({reason}) and snapshot {name} is unreadable"
             ) from error
+
         provenance = Provenance(
             source=source,
             mode=DataMode.SNAPSHOT,
@@ -82,4 +90,5 @@ class DataProvider:
             as_of=entry.as_of,
             note=f"live data unavailable, snapshot used ({reason})",
         )
+
         return Fetched(value, provenance)

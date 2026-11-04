@@ -19,6 +19,7 @@ def _is_retryable(error: httpx.HTTPError) -> bool:
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         return status >= HTTP_SERVER_ERROR or status == HTTP_TOO_MANY_REQUESTS
+
     return isinstance(error, httpx.TransportError)
 
 
@@ -34,14 +35,17 @@ class HttpFetcher:
         self._client = client or httpx.Client(
             timeout=30.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True
         )
+
         self._retries = retries
         self._backoff = backoff_seconds
         self._sleep = sleep
 
     def get_text(self, url: str, params: Mapping[str, str] | None = None) -> str:
         attempts = 0
+
         while True:
             attempts += 1
+
             try:
                 response = self._client.get(url, params=params)
                 response.raise_for_status()
@@ -50,6 +54,7 @@ class HttpFetcher:
                     raise FetchError(
                         f"GET {url} failed after {attempts} attempt(s): {error}"
                     ) from error
+
                 self._sleep(self._backoff * 2 ** (attempts - 1))
             else:
                 return response.text

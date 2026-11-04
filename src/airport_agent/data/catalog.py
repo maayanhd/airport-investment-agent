@@ -19,8 +19,10 @@ REQUIRED_COLUMNS = frozenset(
 
 def _to_airport(row: dict[str, str], wanted: set[str]) -> Airport | None:
     iata = row["iata_code"].upper()
+
     if iata not in wanted or row["iso_country"] != "US" or row["type"] not in SIZES:
         return None
+
     return Airport(
         iata=iata,
         name=row["name"],
@@ -37,18 +39,24 @@ def parse_airports(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
     back to a snapshot."""
     wanted = {code.upper() for code in coverage}
     reader = csv.DictReader(io.StringIO(text))
+
     if not set(reader.fieldnames or []) >= REQUIRED_COLUMNS:
         raise ValueError("not an OurAirports airports.csv (required columns missing)")
+
     airports: dict[str, Airport] = {}
+
     try:
         for row in reader:
             airport = _to_airport(row, wanted)
+
             if airport is not None:
                 airports[airport.iata] = airport
     except (TypeError, AttributeError, KeyError) as error:
         raise ValueError(f"malformed or truncated row in airports.csv: {error!r}") from error
+
     if not airports:
         raise ValueError("no covered airport found in airports.csv")
+
     return airports
 
 
@@ -60,6 +68,7 @@ class OurAirportsCatalog:
     ) -> None:
         self._airports = airports
         self.provenance = provenance
+
         # Covered codes the data does not contain: callers must say "not in the data",
         # not "not covered" (they cannot be told apart from `get() is None` alone).
         self.missing_codes: list[str] = sorted({c.upper() for c in coverage} - airports.keys())
@@ -82,6 +91,7 @@ def load_catalog(
         live=lambda: fetcher.get_text(OURAIRPORTS_URL),
         parse=lambda text: parse_airports(text, wanted),
     )
+
     return OurAirportsCatalog(fetched.value, fetched.provenance, wanted)
 
 
