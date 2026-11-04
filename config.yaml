@@ -8,6 +8,7 @@ score_weights:
   capacity_headroom: 0.2
 min_confidence: 0.6
 snapshot_dir: data/snapshots
+max_data_age_months: 6          # older data is flagged stale (BTS lags 2-4 months)
 traffic_history_months: 30      # window requested; BTS lags 3-4 months, so 30 yields about 26
 traffic_min_months: 24          # last 12 vs prior 12 needs 24 months per airport
 delays_months: 12               # On-Time months requested (31 MB each, so only `data refresh delays` downloads)

@@ -3,6 +3,7 @@
 import csv
 import io
 import zipfile
+import zlib
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -11,9 +12,9 @@ from datetime import date
 from pydantic import TypeAdapter
 
 from airport_agent.config import Settings
-from airport_agent.data.history import History, read_rows, require_enough
+from airport_agent.data.history import History, build_history, read_rows, require_enough
 from airport_agent.data.http import HttpFetcher, NotFoundError
-from airport_agent.data.provider import DataProvider
+from airport_agent.data.provider import DataProvider, Fetched
 from airport_agent.domain import MonthlyDelays
 
 URL = (
@@ -46,8 +47,8 @@ def aggregate_month(content: bytes, month: date, wanted: set[str]) -> list[Month
                 totals = _sum_rows(
                     io.TextIOWrapper(raw, encoding="utf-8", newline=""), month, wanted
                 )
-    except (zipfile.BadZipFile, StopIteration) as error:
-        raise ValueError(f"On-Time {month:%Y-%m}: not a zip file with a CSV inside") from error
+    except (zipfile.BadZipFile, StopIteration, zlib.error, EOFError, csv.Error) as error:
+        raise ValueError(f"On-Time {month:%Y-%m}: not a readable zip with a CSV inside") from error
 
     return [
         MonthlyDelays(iata=code, month=month, **vars(total))
@@ -67,19 +68,38 @@ def _sum_rows(lines: io.TextIOWrapper, month: date, wanted: set[str]) -> dict[st
         if row["Origin"] not in wanted:
             continue
 
+        if None in row or None in row.values():
+            raise ValueError(f"On-Time {month:%Y-%m}: ragged row at line {reader.line_num}")
+
         if not row["FlightDate"].startswith(f"{month:%Y-%m}"):
             raise ValueError(f"On-Time {month:%Y-%m}: found a flight dated {row['FlightDate']}")
 
         total = totals[row["Origin"]]
         total.flights += 1
 
-        if row["Cancelled"] == "1.00":  # some cancelled flights also carry a delay; ignore it
+        if _flag(row["Cancelled"]):  # some cancelled flights also carry a delay; ignore it
             total.cancelled += 1
         else:
-            total.delayed_15 += row["DepDel15"] == "1.00"
+            total.delayed_15 += _flag(row["DepDel15"], blank_ok=True)
             total.delay_minutes += float(row["DepDelayMinutes"] or 0)
 
     return totals
+
+
+def _flag(value: str, *, blank_ok: bool = False) -> bool:
+    """A 0/1 column in any numeric spelling. Anything else is a format change: fail loudly."""
+    if blank_ok and not value.strip():
+        return False
+
+    try:
+        number = float(value)
+    except ValueError:
+        number = -1.0
+
+    if number not in (0.0, 1.0):
+        raise ValueError(f"On-Time: unexpected flag value {value!r}")
+
+    return number == 1.0
 
 
 def _previous(month: date) -> date:
@@ -152,22 +172,39 @@ def refresh_delays(
 ) -> DelayHistory:
     """Downloads one 31 MB file per month, so this is for `data refresh`, not for requests."""
     wanted = tuple(settings.coverage_airports)
-    since = today or date.today()
+    today = today or date.today()
     fetched = provider.fetch(
         SNAPSHOT_NAME,
         source=SOURCE,
         live=lambda: _ROWS.dump_json(
-            _download(fetcher, set(wanted), since, settings.delays_months)
+            _download(fetcher, set(wanted), today, settings.delays_months)
         ).decode(),
         parse=_parser(settings, wanted),
         as_of=_latest_label,
     )
 
-    return DelayHistory(fetched.value, fetched.provenance, wanted)
+    return _history(fetched, wanted, settings, today)
 
 
-def load_delays(provider: DataProvider, settings: Settings) -> DelayHistory:
+def load_delays(
+    provider: DataProvider, settings: Settings, *, today: date | None = None
+) -> DelayHistory:
     wanted = tuple(settings.coverage_airports)
     fetched = provider.read_snapshot(SNAPSHOT_NAME, source=SOURCE, parse=_parser(settings, wanted))
 
-    return DelayHistory(fetched.value, fetched.provenance, wanted)
+    return _history(fetched, wanted, settings, today or date.today())
+
+
+def _history(
+    fetched: Fetched[dict[str, list[MonthlyDelays]]],
+    wanted: tuple[str, ...],
+    settings: Settings,
+    today: date,
+) -> DelayHistory:
+    return build_history(
+        fetched,
+        wanted,
+        min_months=settings.delays_min_months,
+        max_age_months=settings.max_data_age_months,
+        today=today,
+    )

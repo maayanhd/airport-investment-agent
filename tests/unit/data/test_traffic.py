@@ -190,3 +190,16 @@ def test_default_window_leaves_room_for_the_bts_lag() -> None:
 
     # BTS publishes about 4 months late, so the window must exceed the months we need by that much.
     assert settings.traffic_history_months - 4 >= settings.traffic_min_months
+
+
+@respx.mock
+def test_old_traffic_is_flagged_stale(tmp_path: Path) -> None:
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+    fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
+
+    history = load_traffic(
+        DataProvider(SnapshotStore(tmp_path)), fetcher, SETTINGS, today=date(2027, 3, 1)
+    )
+
+    assert history.provenance.stale
+    assert "8 months old" in history.provenance.note

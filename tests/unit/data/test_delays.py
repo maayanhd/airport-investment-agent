@@ -12,6 +12,7 @@ from airport_agent.config import Settings, load_settings
 from airport_agent.data.delays import (
     URL,
     DelayHistory,
+    _flag,
     aggregate_month,
     load_delays,
     parse_delays,
@@ -88,6 +89,46 @@ def test_aggregate_counts_a_real_excerpt_per_airport() -> None:
 def test_unusable_file_raises_only_value_error(content: bytes) -> None:
     with pytest.raises(ValueError):  # noqa: PT011
         aggregate_month(content, JULY, {"ANC", "BOS"})
+
+
+def test_corrupt_zip_data_raises_value_error() -> None:
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("data.csv", CSV * 20)
+
+    damaged = bytearray(buffer.getvalue())
+    damaged[60:90] = bytes(30)
+
+    with pytest.raises(ValueError, match="readable zip|CRC|Error"):
+        aggregate_month(bytes(damaged), JULY, {"ANC"})
+
+
+def test_ragged_row_raises_value_error() -> None:
+    lines = CSV.rstrip("\n").split("\n")
+    anc = next(i for i, line in enumerate(lines) if ',"ANC",' in line)
+    lines[anc] = lines[anc][: len(lines[anc]) // 2]
+
+    with pytest.raises(ValueError, match="ragged"):
+        aggregate_month(_zip("\n".join(lines) + "\n"), JULY, {"ANC"})
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1.00", True), ("1", True), ("1.0", True), (" 1.00 ", True), ("0.00", False), ("0", False)],
+)
+def test_flag_accepts_any_numeric_spelling(value: str, expected: bool) -> None:
+    assert _flag(value) is expected
+
+
+@pytest.mark.parametrize("value", ["2.00", "yes", "", "-1"])
+def test_flag_rejects_other_values(value: str) -> None:
+    with pytest.raises(ValueError, match="unexpected flag"):
+        _flag(value)
+
+
+def test_flag_allows_blank_only_when_asked() -> None:
+    assert _flag("", blank_ok=True) is False
 
 
 def test_cancelled_and_delayed_cannot_exceed_flights() -> None:
@@ -181,3 +222,35 @@ def test_load_reads_only_the_snapshot_and_never_the_network(tmp_path: Path) -> N
 def test_load_without_a_snapshot_says_so(tmp_path: Path) -> None:
     with pytest.raises(DataUnavailableError, match="no valid snapshot"):
         load_delays(DataProvider(SnapshotStore(tmp_path)), SETTINGS)
+
+
+@respx.mock
+def test_old_snapshot_is_flagged_stale(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    respx.get(_url(2026, 8)).respond(200, content=_month_zip(2026, 8))
+    respx.get(_url(2026, 7)).respond(200, content=_month_zip(2026, 7))
+    _refresh(store)
+
+    fresh = load_delays(DataProvider(store), SETTINGS, today=date(2027, 2, 1))
+    old = load_delays(DataProvider(store), SETTINGS, today=date(2027, 3, 1))
+
+    assert not fresh.provenance.stale
+    assert old.provenance.stale
+    assert "stale: data month 2026-08 is 7 months old (limit 6)" in old.provenance.note
+
+
+@respx.mock
+def test_airport_with_too_few_months_is_listed_as_short(tmp_path: Path) -> None:
+    anc_only = "\n".join(
+        line
+        for line in CSV.rstrip("\n").split("\n")
+        if line.startswith('"Year"') or '"ANC"' in line
+    )
+    respx.get(_url(2026, 8)).respond(200, content=_zip(anc_only.replace("2026-07-", "2026-08-")))
+    respx.get(_url(2026, 7)).respond(200, content=_month_zip(2026, 7))
+    settings = SETTINGS.model_copy(update={"min_airport_share": 0.5})
+
+    history = _refresh(SnapshotStore(tmp_path), settings)
+
+    assert history.short_codes == ["BOS"]
+    assert len(history.series("ANC")) == 2

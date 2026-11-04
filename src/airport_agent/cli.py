@@ -1,7 +1,8 @@
 """Command line to inspect and refresh the data layer without starting the agent."""
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from enum import StrEnum
 from pathlib import Path
 
 from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
@@ -10,7 +11,7 @@ from airport_agent.data.history import History
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
 from airport_agent.data.snapshots import SnapshotStore
-from airport_agent.data.traffic import TrafficHistory, load_traffic
+from airport_agent.data.traffic import load_traffic
 from airport_agent.domain import DataMode
 
 ROOT = DEFAULT_CONFIG_PATH.parent
@@ -39,34 +40,27 @@ def _status(store: SnapshotStore) -> int:
     return 1 if invalid else 0
 
 
-def _load(settings: Settings, store: SnapshotStore, *, persist: bool) -> TrafficHistory | None:
+class RefreshSource(StrEnum):
+    TRAFFIC = "traffic"
+    DELAYS = "delays"
+
+
+REFRESHERS: dict[
+    RefreshSource, Callable[[DataProvider, HttpFetcher, Settings], History[object]]
+] = {
+    RefreshSource.TRAFFIC: load_traffic,
+    RefreshSource.DELAYS: refresh_delays,
+}
+
+
+def _refresh(which: RefreshSource, settings: Settings, store: SnapshotStore) -> int:
     try:
-        return load_traffic(DataProvider(store, persist=persist), HttpFetcher(), settings)
-    except DataUnavailableError as error:
-        print(error)
-
-        return None
-
-
-def _refresh(which: str, settings: Settings, store: SnapshotStore) -> int:
-    provider = DataProvider(store)
-    fetcher = HttpFetcher()
-
-    try:
-        history: History[object] = (
-            refresh_delays(provider, fetcher, settings)
-            if which == "delays"
-            else load_traffic(provider, fetcher, settings)
-        )
+        history = REFRESHERS[which](DataProvider(store), HttpFetcher(), settings)
     except DataUnavailableError as error:
         print(error)
 
         return 1
 
-    return _report_refresh(history, settings)
-
-
-def _report_refresh(history: History[object], settings: Settings) -> int:
     source = history.provenance
 
     if source.mode is not DataMode.LIVE:
@@ -80,11 +74,56 @@ def _report_refresh(history: History[object], settings: Settings) -> int:
     if history.missing_codes:
         print(f"covered but not in the data: {', '.join(history.missing_codes)}")
 
+    if source.stale:
+        print(f"warning: {source.note}")
+
     return 0
 
 
 def _ratio(part: float, whole: float, *, scale: float = 1) -> str:
     return f"{scale * part / whole:>6.1f}" if whole else "   n/a"
+
+
+def _print_caveats(history: History[object], code: str) -> None:
+    if history.provenance.note:
+        print(f"note: {history.provenance.note}")
+
+    if code in history.short_codes:
+        months = len(history.series(code))
+        print(f"note: only {months} month(s) for {code} (need {history.min_months}), so do not")
+        print("      compare years or treat it as a full-year average")
+
+
+def _print_traffic(code: str, settings: Settings, store: SnapshotStore) -> int:
+    try:
+        history = load_traffic(DataProvider(store, persist=False), HttpFetcher(), settings)
+    except DataUnavailableError as error:
+        print(error)
+
+        return 1
+
+    source = history.provenance
+    rows = history.series(code)[-SHOWN_MONTHS:]
+
+    if not rows:
+        print(f"{code} has no rows in the data (dataset through {source.as_of})")
+
+        return 3
+
+    print(
+        f"{code} | {source.source} | {source.mode.value} | {code} data through "
+        f"{rows[-1].month:%Y-%m} (dataset through {source.as_of})"
+    )
+    _print_caveats(history, code)
+    print("month    departures  passengers      seats  load%  avg miles/flight")
+
+    for row in rows:
+        print(
+            f"{row.month:%Y-%m}  {row.departures:>10}  {row.passengers:>10}  {row.seats:>9}"
+            f"  {row.load_factor:>5.1f}  {row.avg_flight_distance_miles:>16.0f}"
+        )
+
+    return 0
 
 
 def _print_delays(code: str, settings: Settings, store: SnapshotStore) -> None:
@@ -104,6 +143,7 @@ def _print_delays(code: str, settings: Settings, store: SnapshotStore) -> None:
 
     source = delays.provenance
     print(f"delays | {source.source} | data through {rows[-1].month:%Y-%m} | {source.mode.value}")
+    _print_caveats(delays, code)
     print("month    flights  cancelled%  late15%  avg delay min")
 
     for row in rows:
@@ -123,38 +163,10 @@ def _show(code: str, settings: Settings, store: SnapshotStore) -> int:
 
         return 2
 
-    history = _load(settings, store, persist=False)
-
-    if history is None:
-        return 1
-
-    source = history.provenance
-    rows = history.series(code)[-SHOWN_MONTHS:]
-
-    if not rows:
-        print(f"{code} has no rows in the data (dataset through {source.as_of})")
-
-        return 3
-
-    print(
-        f"{code} | {source.source} | {source.mode.value} | {code} data through "
-        f"{rows[-1].month:%Y-%m} (dataset through {source.as_of})"
-    )
-
-    if source.note:
-        print(f"note: {source.note}")
-
-    print("month    departures  passengers      seats  load%  avg miles/flight")
-
-    for row in rows:
-        print(
-            f"{row.month:%Y-%m}  {row.departures:>10}  {row.passengers:>10}  {row.seats:>9}"
-            f"  {row.load_factor:>5.1f}  {row.avg_flight_distance_miles:>16.0f}"
-        )
-
+    status = _print_traffic(code, settings, store)
     _print_delays(code, settings, store)
 
-    return 0
+    return status
 
 
 def main(
@@ -168,7 +180,9 @@ def main(
     )
     commands.add_parser("status", help="list saved snapshots and check their checksums")
     refresh = commands.add_parser("refresh", help="fetch live data and save it as the snapshot")
-    refresh.add_argument("source", nargs="?", choices=["traffic", "delays"], default="traffic")
+    refresh.add_argument(
+        "source", nargs="?", type=RefreshSource, choices=list(RefreshSource), default="traffic"
+    )
     commands.add_parser("show", help="show recent monthly traffic (read-only)").add_argument(
         "airport"
     )

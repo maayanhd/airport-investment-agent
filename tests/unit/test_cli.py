@@ -1,15 +1,20 @@
 import io
 import re
 import zipfile
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
 import respx
 
+from airport_agent import cli
 from airport_agent.cli import main
 from airport_agent.config import load_settings
+from airport_agent.data.history import History
 from airport_agent.data.traffic import BTS_URL, SNAPSHOT_NAME
+from airport_agent.domain import DataMode, Provenance
 
 SAMPLE = (Path(__file__).parents[1] / "fixtures" / "bts_t100_sample.json").read_text(
     encoding="utf-8"
@@ -194,3 +199,78 @@ def test_show_says_when_an_airport_has_no_on_time_rows(tmp_path: Path, capsys: O
 
     assert main(["data", "show", "SNA"], root=tmp_path, settings=WITH_DELAYS) == 0
     assert "delays: no On-Time rows for SNA" in capsys.readouterr().out
+
+
+@respx.mock
+def test_show_still_prints_delays_when_traffic_is_unavailable(tmp_path: Path, capsys: Out) -> None:
+    respx.get(url__regex=r".*PREZIP.*\.zip").mock(side_effect=_ontime_zip)
+    main(["data", "refresh", "delays"], root=tmp_path, settings=WITH_DELAYS)
+    capsys.readouterr()
+    respx.get(BTS_URL).respond(503)
+
+    assert main(["data", "show", "ANC"], root=tmp_path, settings=WITH_DELAYS) == 1
+
+    out = capsys.readouterr().out
+    assert "no valid snapshot" in out
+    assert "late15%" in out
+
+
+def _ontime_zip_without_boston_in_newest_month() -> Callable[[httpx.Request], httpx.Response]:
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        response = _ontime_zip(request)
+        calls.append(str(request.url))
+
+        if len(calls) > 1:  # the newest month is requested first
+            return response
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            lines = archive.read("data.csv").decode().splitlines()
+
+        buffer = io.BytesIO()
+
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("data.csv", "\n".join(x for x in lines if '"BOS"' not in x) + "\n")
+
+        return httpx.Response(200, content=buffer.getvalue())
+
+    return respond
+
+
+@respx.mock
+def test_show_warns_about_an_airport_with_too_few_months(tmp_path: Path, capsys: Out) -> None:
+    respx.get(url__regex=r".*PREZIP.*\.zip").mock(
+        side_effect=_ontime_zip_without_boston_in_newest_month()
+    )
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+    settings = WITH_DELAYS.model_copy(update={"coverage_airports": ["ANC", "BOS"]})
+    main(["data", "refresh", "delays"], root=tmp_path, settings=settings)
+    capsys.readouterr()
+
+    main(["data", "show", "BOS"], root=tmp_path, settings=settings)
+
+    assert "note: only 1 month(s) for BOS (need 2)" in capsys.readouterr().out
+
+
+def test_unknown_refresh_source_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(["data", "refresh", "weather"], root=tmp_path, settings=SETTINGS)
+
+
+def test_refresh_warns_when_even_the_fresh_data_is_stale(
+    tmp_path: Path, capsys: Out, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale = Provenance(
+        source="S",
+        mode=DataMode.LIVE,
+        fetched_at=datetime.now(UTC),
+        as_of="2025-01",
+        note="stale: data month 2025-01 is 21 months old (limit 6)",
+        stale=True,
+    )
+    history: History[object] = History({"ANC": []}, stale, ["ANC"])
+    monkeypatch.setitem(cli.REFRESHERS, cli.RefreshSource.DELAYS, lambda *_: history)
+
+    assert main(["data", "refresh", "delays"], root=tmp_path, settings=SETTINGS) == 0
+    assert "warning: stale: data month 2025-01" in capsys.readouterr().out

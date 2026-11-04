@@ -7,7 +7,7 @@ from datetime import date
 from pydantic import BaseModel, TypeAdapter
 
 from airport_agent.config import Settings
-from airport_agent.data.history import History, read_rows, require_enough
+from airport_agent.data.history import History, build_history, read_rows, require_enough
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider
 from airport_agent.domain import MonthlyTraffic
@@ -111,7 +111,8 @@ def load_traffic(
 ) -> TrafficHistory:
     wanted = tuple(code.upper() for code in settings.coverage_airports)
 
-    since = _months_back(today or date.today(), settings.traffic_history_months)
+    today = today or date.today()
+    since = _months_back(today, settings.traffic_history_months)
     fetched = provider.fetch(
         SNAPSHOT_NAME,
         source=SOURCE,
@@ -125,4 +126,10 @@ def load_traffic(
         as_of=_latest_label,
     )
 
-    return TrafficHistory(fetched.value, fetched.provenance, wanted)
+    return build_history(
+        fetched,
+        wanted,
+        min_months=settings.traffic_min_months,
+        max_age_months=settings.max_data_age_months,
+        today=today,
+    )

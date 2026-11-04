@@ -25,6 +25,7 @@ class Provenance(BaseModel):
     fetched_at: datetime
     as_of: str = ""
     note: str = ""  # why a snapshot was used instead of live data, if it was
+    stale: bool = False  # the data month is older than the configured limit
 
 
 class Airport(BaseModel):

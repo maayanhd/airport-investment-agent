@@ -71,22 +71,18 @@ class DataProvider:
 
     def read_snapshot(self, name: str, *, source: str, parse: Callable[[str], T]) -> Fetched[T]:
         """Snapshot only, for sources too big to download while serving a request."""
-        return self._load(name, source, parse, prefix="", note="")
+        return self._load(name, source, parse, reason=None)
 
     def _from_snapshot(
         self, name: str, source: str, reason: str, parse: Callable[[str], T]
     ) -> Fetched[T]:
-        return self._load(
-            name,
-            source,
-            parse,
-            prefix=f"live data unusable ({reason}) and ",
-            note=f"live data unavailable, snapshot used ({reason})",
-        )
+        return self._load(name, source, parse, reason=reason)
 
     def _load(
-        self, name: str, source: str, parse: Callable[[str], T], *, prefix: str, note: str
+        self, name: str, source: str, parse: Callable[[str], T], *, reason: str | None
     ) -> Fetched[T]:
+        prefix = f"live data unusable ({reason}) and " if reason else ""
+        note = f"live data unavailable, snapshot used ({reason})" if reason else ""
         loaded = self._store.load(name)
 
         if loaded is None:
