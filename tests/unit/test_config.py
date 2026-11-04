@@ -34,3 +34,11 @@ def test_history_window_must_cover_the_minimum_months() -> None:
 
     with pytest.raises(ValueError, match="traffic_history_months"):
         Settings.model_validate(data)
+
+
+def test_delays_window_must_cover_the_minimum_months() -> None:
+    data = load_settings().model_dump()
+    data["delays_months"] = data["delays_min_months"] - 1
+
+    with pytest.raises(ValueError, match="delays_months"):
+        Settings.model_validate(data)

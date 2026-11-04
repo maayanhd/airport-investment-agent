@@ -1,11 +1,21 @@
+import io
+import re
+import zipfile
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 import respx
 
+from airport_agent import cli
 from airport_agent.cli import main
 from airport_agent.config import load_settings
+from airport_agent.data.history import History
+from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import BTS_URL, SNAPSHOT_NAME
+from airport_agent.domain import DataMode, Provenance
 
 SAMPLE = (Path(__file__).parents[1] / "fixtures" / "bts_t100_sample.json").read_text(
     encoding="utf-8"
@@ -15,8 +25,14 @@ SETTINGS = load_settings().model_copy(
         "coverage_airports": ["ANC", "BOS", "SNA", "LAX"],
         "traffic_history_months": 24,
         "traffic_min_months": 4,
-        "traffic_min_airport_share": 0.75,
+        "min_airport_share": 0.75,
     }
+)
+WITH_DELAYS = SETTINGS.model_copy(
+    update={"delays_months": 2, "delays_min_months": 2, "min_airport_share": 0.5}
+)
+ONTIME_CSV = (Path(__file__).parents[1] / "fixtures" / "ontime_sample.csv").read_text(
+    encoding="utf-8"
 )
 Out = pytest.CaptureFixture[str]
 
@@ -124,3 +140,168 @@ def test_show_reports_covered_airport_missing_from_data(tmp_path: Path, capsys: 
 
     assert _run("show", "LAX", root=tmp_path) == 3
     assert "LAX has no rows" in capsys.readouterr().out
+
+
+def _ontime_zip(request: httpx.Request) -> httpx.Response:
+    found = re.search(r"_(\d{4})_(\d{1,2})\.zip", str(request.url))
+    assert found
+    year, month = found.groups()
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("data.csv", ONTIME_CSV.replace("2026-07-", f"{year}-{int(month):02d}-"))
+
+    return httpx.Response(200, content=buffer.getvalue())
+
+
+def test_show_points_to_refresh_when_there_is_no_delay_snapshot(
+    tmp_path: Path, capsys: Out
+) -> None:
+    with respx.mock:
+        respx.get(BTS_URL).respond(200, text=SAMPLE)
+        assert main(["data", "show", "ANC"], root=tmp_path, settings=WITH_DELAYS) == 0
+
+    assert "no snapshot yet, run `airport-agent data refresh delays`" in capsys.readouterr().out
+
+
+@respx.mock
+def test_refresh_delays_then_show_prints_both_tables(tmp_path: Path, capsys: Out) -> None:
+    respx.get(url__regex=r".*PREZIP.*\.zip").mock(side_effect=_ontime_zip)
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+
+    assert main(["data", "refresh", "delays"], root=tmp_path, settings=WITH_DELAYS) == 0
+    assert "airports with data: 2" in capsys.readouterr().out
+
+    assert main(["data", "show", "ANC"], root=tmp_path, settings=WITH_DELAYS) == 0
+
+    out = capsys.readouterr().out
+    assert "393566" in out  # the traffic table
+    assert "delays | BTS On-Time Reporting" in out
+    assert "late15%" in out
+    assert "25.0" in out  # ANC: 1 of 4 flights cancelled
+    assert "33.3" in out  # ANC: 1 of the 3 operated flights was 15+ minutes late
+    assert "289.3" in out  # ANC: 868 delay minutes over 3 operated flights
+
+
+@respx.mock
+def test_refresh_delays_fails_loudly_without_a_snapshot(tmp_path: Path, capsys: Out) -> None:
+    respx.get(url__regex=r".*PREZIP.*\.zip").respond(503)
+
+    assert main(["data", "refresh", "delays"], root=tmp_path, settings=WITH_DELAYS) == 1
+    assert "no valid snapshot" in capsys.readouterr().out
+
+
+@respx.mock
+def test_show_says_when_an_airport_has_no_on_time_rows(tmp_path: Path, capsys: Out) -> None:
+    respx.get(url__regex=r".*PREZIP.*\.zip").mock(side_effect=_ontime_zip)
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+    main(["data", "refresh", "delays"], root=tmp_path, settings=WITH_DELAYS)
+    capsys.readouterr()
+
+    assert main(["data", "show", "SNA"], root=tmp_path, settings=WITH_DELAYS) == 0
+    assert "delays: no On-Time rows for SNA" in capsys.readouterr().out
+
+
+@respx.mock
+def test_show_still_prints_delays_when_traffic_is_unavailable(tmp_path: Path, capsys: Out) -> None:
+    respx.get(url__regex=r".*PREZIP.*\.zip").mock(side_effect=_ontime_zip)
+    main(["data", "refresh", "delays"], root=tmp_path, settings=WITH_DELAYS)
+    capsys.readouterr()
+    respx.get(BTS_URL).respond(503)
+
+    assert main(["data", "show", "ANC"], root=tmp_path, settings=WITH_DELAYS) == 1
+
+    out = capsys.readouterr().out
+    assert "no valid snapshot" in out
+    assert "late15%" in out
+
+
+def _ontime_zip_without_boston_in_newest_month() -> Callable[[httpx.Request], httpx.Response]:
+    calls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        response = _ontime_zip(request)
+        calls.append(str(request.url))
+
+        if len(calls) > 1:  # the newest month is requested first
+            return response
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            lines = archive.read("data.csv").decode().splitlines()
+
+        buffer = io.BytesIO()
+
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("data.csv", "\n".join(x for x in lines if '"BOS"' not in x) + "\n")
+
+        return httpx.Response(200, content=buffer.getvalue())
+
+    return respond
+
+
+@respx.mock
+def test_show_warns_about_an_airport_with_too_few_months(tmp_path: Path, capsys: Out) -> None:
+    respx.get(url__regex=r".*PREZIP.*\.zip").mock(
+        side_effect=_ontime_zip_without_boston_in_newest_month()
+    )
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+    settings = WITH_DELAYS.model_copy(update={"coverage_airports": ["ANC", "BOS"]})
+    main(["data", "refresh", "delays"], root=tmp_path, settings=settings)
+    capsys.readouterr()
+
+    main(["data", "show", "BOS"], root=tmp_path, settings=settings)
+
+    assert "note: only 1 month(s) for BOS (need 2)" in capsys.readouterr().out
+
+
+def test_unknown_refresh_source_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        main(["data", "refresh", "weather"], root=tmp_path, settings=SETTINGS)
+
+
+def test_refresh_warns_when_even_the_fresh_data_is_stale(
+    tmp_path: Path, capsys: Out, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale = Provenance(
+        source="S",
+        mode=DataMode.LIVE,
+        fetched_at=datetime.now(UTC),
+        as_of="2025-01",
+        note="stale: data month 2025-01 is 21 months old (limit 6)",
+        stale=True,
+    )
+    history: History[object] = History({"ANC": []}, stale, ["ANC"])
+    monkeypatch.setitem(cli.REFRESHERS, cli.RefreshSource.DELAYS, lambda *_: history)
+
+    assert main(["data", "refresh", "delays"], root=tmp_path, settings=SETTINGS) == 0
+    assert "warning: stale: data month 2025-01" in capsys.readouterr().out
+
+
+@respx.mock
+def test_refresh_fails_when_the_snapshot_cannot_be_written(
+    tmp_path: Path, capsys: Out, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("read-only folder")
+
+    monkeypatch.setattr(SnapshotStore, "save", refuse)
+
+    assert _run("refresh", root=tmp_path) == 1
+
+    output = capsys.readouterr().out
+
+    assert "could not write the snapshot" in output
+    assert "saved BTS" not in output
+
+
+@respx.mock
+def test_status_marks_an_old_snapshot_stale(tmp_path: Path, capsys: Out) -> None:
+    respx.get(BTS_URL).respond(200, text=SAMPLE)
+    _run("refresh", root=tmp_path)
+    capsys.readouterr()
+    old = SETTINGS.model_copy(update={"max_data_age_months": 0})
+
+    assert main(["data", "status"], root=tmp_path, settings=old) == 0
+    assert "STALE" in capsys.readouterr().out

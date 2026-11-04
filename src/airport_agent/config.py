@@ -21,9 +21,12 @@ class Settings(BaseModel):
     judge_model: str
     coverage_airports: list[str]
     snapshot_dir: Path
+    max_data_age_months: int = Field(ge=1)
     traffic_history_months: int = Field(ge=13)
     traffic_min_months: int = Field(ge=13)
-    traffic_min_airport_share: float = Field(gt=0, le=1)
+    delays_months: int = Field(ge=3)
+    delays_min_months: int = Field(ge=3)
+    min_airport_share: float = Field(gt=0, le=1)
 
     @field_validator("coverage_airports")
     @classmethod
@@ -36,6 +39,9 @@ class Settings(BaseModel):
     def _window_covers_minimum(self) -> Self:
         if self.traffic_history_months < self.traffic_min_months:
             raise ValueError("traffic_history_months must be at least traffic_min_months")
+
+        if self.delays_months < self.delays_min_months:
+            raise ValueError("delays_months must be at least delays_min_months")
 
         return self
 

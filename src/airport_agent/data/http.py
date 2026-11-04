@@ -8,10 +8,15 @@ import httpx
 USER_AGENT = "airport-investment-agent/0.1 (+https://github.com/maayanhd/airport-investment-agent)"
 HTTP_TOO_MANY_REQUESTS = 429
 HTTP_SERVER_ERROR = 500
+HTTP_NOT_FOUND = 404
 
 
 class FetchError(Exception):
     """A source could not be fetched."""
+
+
+class NotFoundError(FetchError):
+    """The server answered 404: the file does not exist (yet)."""
 
 
 def _is_retryable(error: httpx.HTTPError) -> bool:
@@ -21,6 +26,10 @@ def _is_retryable(error: httpx.HTTPError) -> bool:
         return status >= HTTP_SERVER_ERROR or status == HTTP_TOO_MANY_REQUESTS
 
     return isinstance(error, httpx.TransportError)
+
+
+def _is_not_found(error: httpx.HTTPError) -> bool:
+    return isinstance(error, httpx.HTTPStatusError) and error.response.status_code == HTTP_NOT_FOUND
 
 
 class HttpFetcher:
@@ -41,6 +50,12 @@ class HttpFetcher:
         self._sleep = sleep
 
     def get_text(self, url: str, params: Mapping[str, str] | None = None) -> str:
+        return self._get(url, params).text
+
+    def get_bytes(self, url: str) -> bytes:
+        return self._get(url, None).content
+
+    def _get(self, url: str, params: Mapping[str, str] | None) -> httpx.Response:
         attempts = 0
 
         while True:
@@ -51,10 +66,12 @@ class HttpFetcher:
                 response.raise_for_status()
             except httpx.HTTPError as error:
                 if not _is_retryable(error) or attempts > self._retries:
-                    raise FetchError(
+                    failure = NotFoundError if _is_not_found(error) else FetchError
+
+                    raise failure(
                         f"GET {url} failed after {attempts} attempt(s): {error}"
                     ) from error
 
                 self._sleep(self._backoff * 2 ** (attempts - 1))
             else:
-                return response.text
+                return response
