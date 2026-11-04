@@ -3,7 +3,6 @@
 import csv
 import io
 from collections.abc import Iterable
-from operator import attrgetter
 
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider
@@ -77,7 +76,7 @@ class OurAirportsCatalog:
     def in_states(self, states: Iterable[str]) -> list[Airport]:
         wanted = {state.upper() for state in states}
         return sorted(
-            (a for a in self._airports.values() if a.state in wanted), key=attrgetter("iata")
+            (a for a in self._airports.values() if a.state in wanted), key=lambda a: a.iata
         )
 
 
