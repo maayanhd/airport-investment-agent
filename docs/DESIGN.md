@@ -1,6 +1,6 @@
 # Design
 
-> Status: skeleton. KPIs and config are done; scoring code, tools, LLM layer and validator are not. Parts marked _TBD_ are filled in as milestones land. The README holds the longer reasoning log.
+> Status: KPIs, config and the scoring function (with a `score` CLI command) are done; tools, the LLM layer and the validator are not. Parts marked _TBD_ are filled in as milestones land. The README holds the longer reasoning log.
 
 ## 1. Scoring methodology
 
@@ -12,7 +12,7 @@
 |---|---|---|
 | `passenger_growth` | passengers, last 12 months vs the 12 before | 24 consecutive months |
 | `load_factor` | passengers / seats, in percent | last 12 months |
-| `delay_rate` | share of operated flights departing 15+ minutes late | last 12 months (min 9) |
+| `delay_rate` (scored as the component `delay_pressure`) | share of operated flights departing 15+ minutes late | last 12 months (min 9) |
 | `capacity_gap` | passenger growth minus seat growth | 24 consecutive months |
 
 A KPI is `None` when the data cannot support it (too few or non-consecutive months). It is never interpolated.
@@ -21,7 +21,7 @@ A KPI is `None` when the data cannot support it (too few or non-consecutive mont
 
 **Why fixed bounds, not percentile rank.**
 - A score then does not change with the question: BOS scores the same in "New England" and in "US-wide", which follow-ups ("and BOS?") rely on.
-- The bounds are the rounded 5th to 95th percentile of the covered airports at the time of writing, so most airports spread across the scale.
+- The bounds are the rounded 5th to 95th percentile of the 97 covered airports on 2026-11 data, so most airports spread across the scale. Load factor has a long low tail (5th percentile 48%, median 77%, 95th 82%), hence `[50, 82]`; an earlier `[65, 85]` clipped 11 airports to zero.
 - Cost: the bounds age, so they must be re-checked when data is refreshed. Percentile rank would need no maintenance but would shift scores whenever the peer set changes.
 
 **Proxies, labelled as such.**
@@ -29,7 +29,7 @@ A KPI is `None` when the data cannot support it (too few or non-consecutive mont
 - _Congestion_ is delay rate plus cancellation rate. It is a proxy.
 - _Long-haul share_: T-100 summary data gives an average distance per airport, not a distribution, so an exact share of departures at 1,500 miles or more is not supported. The answer gives average distance and says so. (Confirm against `config.yaml` `long_haul_min_miles` if a route-level source is added.)
 
-**Confidence and abstention.** `min_confidence` (0.6) gates ranked answers. Inputs to confidence: missing KPIs, data age against `max_data_age_months`, live versus snapshot. Below the gate the agent asks or abstains with the reason. _TBD: exact formula._
+**Confidence and abstention.** Confidence is the total weight of the components that have data (1.0 when all four do). A missing KPI is never filled in: the remaining weights are rescaled so the score still runs 0 to 100, and the answer lists what is missing. Below `min_confidence` (0.6) the airport gets no score and the reason is shown. Because a rescaled score is not comparable with a full one, `rank` puts airports with every component first, then partial ones, and every answer shows its confidence. Data age and live-versus-snapshot are not part of confidence; they are printed next to the score (`stale`, the snapshot note) so the reader sees them. If the delay source is unavailable the CLI says so once, because then every airport is missing `delay_pressure`, not just one.
 
 **Worked example.** _TBD once the scoring function exists (one airport, all four components)._
 

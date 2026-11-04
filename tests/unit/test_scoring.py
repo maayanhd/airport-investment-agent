@@ -14,8 +14,8 @@ from airport_agent.scoring import AirportScore, rank, scale, score_airport
 
 SETTINGS = load_settings()
 SNAPSHOTS = Path(__file__).parents[2] / "data" / "snapshots"
-HIGH = {"passenger_growth": 0.10, "load_factor": 85.0, "delay_rate": 0.30, "capacity_gap": 0.05}
-LOW = {"passenger_growth": -0.10, "load_factor": 65.0, "delay_rate": 0.15, "capacity_gap": -0.05}
+HIGH = {"passenger_growth": 0.10, "load_factor": 82.0, "delay_rate": 0.30, "capacity_gap": 0.05}
+LOW = {"passenger_growth": -0.10, "load_factor": 50.0, "delay_rate": 0.15, "capacity_gap": -0.05}
 
 
 def _kpis(values: Mapping[str, float | None] | None = None, iata: str = "AAA") -> AirportKpis:
@@ -181,3 +181,12 @@ def test_every_covered_airport_gets_an_honest_result_from_the_committed_snapshot
     assert sum(0.0 < v < 100.0 for v in values) >= 90  # the ranges do not saturate
     assert max(values) - min(values) > 30  # and they separate airports
     assert {s.iata for s in scores if s.missing} == {"HVN", "HYA", "ACK", "MVY", "LEB"}
+
+
+def test_rank_puts_partial_scores_after_complete_ones() -> None:
+    complete = _score(_kpis(LOW, "BBB"))
+    partial = _score(_kpis({"passenger_growth": 0.10, "load_factor": 82.0}, "AAA"))
+
+    assert partial.score is not None and complete.score is not None
+    assert partial.score > complete.score
+    assert [s.iata for s in rank([partial, complete])] == ["BBB", "AAA"]

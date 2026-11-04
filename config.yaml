@@ -6,9 +6,9 @@ score_weights:                  # must sum to 1; every component is "higher = st
   load_factor: 0.3              # percent of seats filled, last 12 months
   delay_pressure: 0.2           # share of operated flights departing 15+ minutes late
   capacity_gap: 0.2             # passenger growth minus seat growth (demand outgrowing supply)
-score_bounds:                   # [value scored 0, value scored 1]; clipped outside. About the 5th-95th
-  passenger_growth: [-0.10, 0.10]   # percentile of the 97 covered airports on 2026-11 data, rounded
-  load_factor: [65, 85]
+score_bounds:                   # [value scored 0, value scored 1]; clipped outside. Rounded 5th-95th percentile of
+  passenger_growth: [-0.10, 0.10]   # the 97 covered airports on 2026-11 data (re-check after a refresh)
+  load_factor: [50, 82]
   delay_pressure: [0.15, 0.30]
   capacity_gap: [-0.05, 0.05]
 min_confidence: 0.6

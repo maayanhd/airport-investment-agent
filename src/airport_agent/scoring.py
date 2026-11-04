@@ -82,5 +82,8 @@ def score_airport(
 
 
 def rank(scores: Iterable[AirportScore]) -> list[AirportScore]:
-    """Best first. Airports without a score go last, ties break by code."""
-    return sorted(scores, key=lambda s: (s.score is None, -(s.score or 0.0), s.iata))
+    """Best first. Airports with every component come before partial ones (a missing component
+    rescales the weights, so its score is not comparable); unscored go last; ties break by code."""
+    return sorted(
+        scores, key=lambda s: (s.score is None, bool(s.missing), -(s.score or 0.0), s.iata)
+    )

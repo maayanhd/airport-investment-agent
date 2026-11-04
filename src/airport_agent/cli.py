@@ -7,7 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
-from airport_agent.data.delays import load_delays, refresh_delays
+from airport_agent.data.delays import DelayHistory, load_delays, refresh_delays
 from airport_agent.data.history import History, data_age_months
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
@@ -216,8 +216,29 @@ def _through(kpis: AirportKpis) -> str:
     return ", ".join(parts)
 
 
+def _delays_or_none(settings: Settings, store: SnapshotStore) -> DelayHistory | None:
+    try:
+        return load_delays(DataProvider(store, persist=False), settings)
+    except DataUnavailableError as error:
+        print(f"data: delays unavailable, so delay_pressure is missing for every airport ({error})")
+
+        return None
+
+
+def _print_sources(traffic: History[object], delays: History[object] | None) -> None:
+    for label, history in (("traffic", traffic), ("delays", delays)):
+        if history is None:
+            continue
+
+        source = history.provenance
+        print(f"data: {label} {source.mode.value}, {source.source}, data month {source.as_of}")
+
+        if source.note:
+            print(f"  note: {source.note}")
+
+
 def _score(codes: Sequence[str], settings: Settings, store: SnapshotStore) -> int:
-    wanted = [code.upper() for code in codes]
+    wanted = list(dict.fromkeys(code.upper() for code in codes))
     unknown = [code for code in wanted if code not in settings.coverage_airports]
 
     if unknown:
@@ -232,10 +253,9 @@ def _score(codes: Sequence[str], settings: Settings, store: SnapshotStore) -> in
 
         return 1
 
-    try:
-        delays = load_delays(DataProvider(store, persist=False), settings)
-    except DataUnavailableError:
-        delays = None
+    delays = _delays_or_none(settings, store)
+
+    _print_sources(traffic, delays)
 
     for code in wanted:
         kpis = compute_kpis(

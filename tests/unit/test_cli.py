@@ -340,6 +340,8 @@ def test_score_prints_components_and_what_is_missing(tmp_path: Path, capsys: Out
     assert "confidence 80%" in out  # no delay snapshot, so 80% of the weight has data
     assert "passenger_growth" in out
     assert "missing (not enough data): delay_pressure" in out
+    assert "data: delays unavailable" in out
+    assert "data: traffic live" in out
 
 
 @respx.mock
@@ -364,3 +366,12 @@ def test_score_reports_when_traffic_data_is_unavailable(tmp_path: Path, capsys: 
 
     assert main(["score", "ANC"], root=tmp_path, settings=SETTINGS) == 1
     assert "no valid snapshot" in capsys.readouterr().out
+
+
+@respx.mock
+def test_score_lists_a_repeated_airport_once(tmp_path: Path, capsys: Out) -> None:
+    respx.get(BTS_URL).respond(200, text=_two_years_of_traffic())
+    only_anc = SETTINGS.model_copy(update={"coverage_airports": ["ANC"]})
+
+    assert main(["score", "ANC", "anc", "ANC"], root=tmp_path, settings=only_anc) == 0
+    assert capsys.readouterr().out.count("ANC | score ") == 1
