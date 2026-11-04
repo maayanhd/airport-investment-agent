@@ -1,0 +1,11 @@
+# All tunable assumptions live here and are echoed to the user as "assumptions".
+long_haul_min_miles: 1500
+new_england_states: [CT, MA, ME, NH, RI, VT]
+score_weights:
+  passenger_growth: 0.3
+  load_factor: 0.3
+  delay_pressure: 0.2
+  capacity_headroom: 0.2
+min_confidence: 0.6
+router_model: claude-haiku-5-5
+judge_model: claude-sonnet-5-5

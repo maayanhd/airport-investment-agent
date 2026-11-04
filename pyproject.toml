@@ -1,0 +1,38 @@
+[project]
+name = "airport-agent"
+version = "0.1.0"
+description = "Conversational agent that ranks and compares US airports for modernization investment"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.7", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "hypothesis>=6", "ruff>=0.6", "mypy>=1.11", "types-PyYAML", "pre-commit>=3.8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "C90", "SIM", "PL", "RET"]
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = ["live: calls real external services; run locally only"]
