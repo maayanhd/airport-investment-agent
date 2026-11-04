@@ -38,8 +38,6 @@ class DataProvider:
         parse: Callable[[str], T],
         as_of: str = "",
     ) -> Fetched[T]:
-        """Live first. `parse` must raise ValueError on bad content, so a 200 response that is
-        an error page or a truncated file never overwrites the last good snapshot."""
         try:
             text = live()
             value = parse(text)
@@ -58,7 +56,6 @@ class DataProvider:
         return Fetched(value, provenance)
 
     def _try_save(self, name: str, text: str, source: str, as_of: str) -> None:
-        """A failed write must not discard good live data; it only loses the fallback copy."""
         try:
             self._store.save(name, text, source=source, as_of=as_of)
         except OSError as error:

@@ -9,11 +9,9 @@ from airport_agent.data.provider import DataProvider
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.domain import DataMode
 
-# A verbatim excerpt of the real file, see tests/fixtures/README.md.
 SAMPLE = (Path(__file__).parents[2] / "fixtures" / "airports_sample.csv").read_text(
     encoding="utf-8"
 )
-# Constructed bad inputs, derived from the real excerpt.
 TRUNCATED = SAMPLE.rsplit("\n", 3)[0] + '\n3,"KBDL","large_airport","Bradley"\n'
 BAD_CONTENT = [
     TRUNCATED,
@@ -25,8 +23,7 @@ BAD_CONTENT = [
 
 def test_parse_keeps_only_covered_us_airports_with_service_types() -> None:
     airports = parse_airports(SAMPLE, ["ANC", "BOS", "BDL", "LHR", "WLR"])
-    # LHR is not US; WLR is a seaplane base; the Argentine "Lobos" also has IATA code BOS
-    # and must not replace Boston.
+    # LHR is not US, WLR is a seaplane base, and the Argentine "Lobos" also has code BOS
     assert set(airports) == {"ANC", "BOS", "BDL"}
     assert airports["BOS"].state == "MA"
     assert airports["BOS"].name.startswith("Boston Logan")

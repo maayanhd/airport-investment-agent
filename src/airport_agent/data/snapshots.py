@@ -1,7 +1,4 @@
-"""Pinned copies of fetched data, with a manifest so every file has provenance.
-
-Writes are atomic (temp file then rename) and loads verify the stored checksum, so a crash or a
-hand-edited file can never be served as trusted data."""
+"""Pinned copies of fetched data, with a manifest and checksums."""
 
 import hashlib
 import json
@@ -55,7 +52,6 @@ class SnapshotStore:
         return entry
 
     def load(self, name: str) -> tuple[str, SnapshotEntry] | None:
-        """Returns None if the snapshot is missing, or its content does not match the checksum."""
         entry = self._read_manifest().get(name)
         path = self._root / name
 
@@ -70,8 +66,6 @@ class SnapshotStore:
         return data.decode("utf-8"), entry
 
     def _read_manifest(self) -> dict[str, SnapshotEntry]:
-        """A missing manifest is empty. An unreadable one also counts as empty so the next save
-        repairs it, but that drops the other entries, so it is logged."""
         path = self._root / self.MANIFEST
 
         if not path.exists():

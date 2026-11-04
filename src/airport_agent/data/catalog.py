@@ -34,9 +34,7 @@ def _to_airport(row: dict[str, str], wanted: set[str]) -> Airport | None:
 
 
 def parse_airports(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
-    """Raises ValueError, and only ValueError, for any unusable content: wrong file, missing
-    columns, truncated or malformed rows, or no covered airport. Callers rely on this to fall
-    back to a snapshot."""
+    """Raises ValueError, and only ValueError, on unusable content."""
     wanted = {code.upper() for code in coverage}
     reader = csv.DictReader(io.StringIO(text))
 
@@ -46,10 +44,7 @@ def parse_airports(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
     airports: dict[str, Airport] = {}
 
     for row in reader:
-        # A short row has None values, a long one has extras under the key None. Either
-        # shifts the columns, so a row could be dropped or misread without any error. With
-        # this check and the column check above, every used field is a str, so the only
-        # errors left are bad numbers or values, and both are ValueError.
+        # DictReader marks short rows with None values and long rows with a None key.
         if None in row or None in row.values():
             raise ValueError(f"ragged row in airports.csv (line {reader.line_num})")
 
@@ -73,8 +68,6 @@ class OurAirportsCatalog:
         self._airports = airports
         self.provenance = provenance
 
-        # Covered codes the data does not contain: callers must say "not in the data",
-        # not "not covered" (they cannot be told apart from `get() is None` alone).
         self.missing_codes: list[str] = sorted({c.upper() for c in coverage} - airports.keys())
 
     def get(self, iata: str) -> Airport | None:
