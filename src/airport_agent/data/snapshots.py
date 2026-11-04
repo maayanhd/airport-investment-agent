@@ -1,13 +1,11 @@
 """Pinned copies of fetched data, with a manifest and checksums."""
 
 import hashlib
-import json
 import logging
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +17,14 @@ class SnapshotEntry(BaseModel):
     sha256: str
 
 
+_MANIFEST = TypeAdapter(dict[str, SnapshotEntry])
+
+
 def _atomic_write(path: Path, data: bytes) -> None:
     temp = path.with_name(path.name + ".tmp")
 
     temp.write_bytes(data)
-    os.replace(temp, path)
+    temp.replace(path)
 
 
 class SnapshotStore:
@@ -51,6 +52,9 @@ class SnapshotStore:
 
         return entry
 
+    def entries(self) -> dict[str, SnapshotEntry]:
+        return self._read_manifest()
+
     def load(self, name: str) -> tuple[str, SnapshotEntry] | None:
         entry = self._read_manifest().get(name)
         path = self._root / name
@@ -72,16 +76,13 @@ class SnapshotStore:
             return {}
 
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-
-            return {name: SnapshotEntry.model_validate(item) for name, item in raw.items()}
-        except (OSError, ValueError, AttributeError, ValidationError) as error:
+            return _MANIFEST.validate_json(path.read_bytes())
+        except (OSError, ValueError) as error:
             logger.warning("snapshot manifest unreadable, treating as empty (%s)", error)
 
             return {}
 
     def _write_manifest(self, manifest: dict[str, SnapshotEntry]) -> None:
-        payload = {name: json.loads(entry.model_dump_json()) for name, entry in manifest.items()}
-        text = json.dumps(payload, indent=2, sort_keys=True)
+        text = _MANIFEST.dump_json(dict(sorted(manifest.items())), indent=2)
 
-        _atomic_write(self._root / self.MANIFEST, text.encode("utf-8"))
+        _atomic_write(self._root / self.MANIFEST, text)

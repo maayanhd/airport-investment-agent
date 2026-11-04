@@ -1,6 +1,6 @@
 """Core value objects shared across layers."""
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal
 
@@ -36,3 +36,15 @@ class Airport(BaseModel):
     latitude: float
     longitude: float
     size: Literal["large", "medium", "small"]
+
+
+class MonthlyTraffic(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    iata: str = Field(pattern=f"^{IATA_PATTERN}$")
+    month: date
+    departures: int = Field(ge=0)
+    passengers: int = Field(ge=0)
+    seats: int = Field(ge=0)
+    load_factor: float = Field(ge=0, le=100)  # percent of seats filled
+    avg_flight_distance_miles: float = Field(ge=0)

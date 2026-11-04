@@ -1,0 +1,110 @@
+[
+ {
+  "origin_airport_code": "ANC",
+  "reporting_month": "2026-04-01T00:00:00.000",
+  "total_departures": "6249",
+  "total_passengers": "171686",
+  "total_seats": "247769",
+  "total_load_factor": "69.3",
+  "total_distance_flight_sm": "1739.313490158425"
+ },
+ {
+  "origin_airport_code": "ANC",
+  "reporting_month": "2026-05-01T00:00:00.000",
+  "total_departures": "6635",
+  "total_passengers": "235294",
+  "total_seats": "339205",
+  "total_load_factor": "69.4",
+  "total_distance_flight_sm": "1838.719216277317"
+ },
+ {
+  "origin_airport_code": "ANC",
+  "reporting_month": "2026-06-01T00:00:00.000",
+  "total_departures": "8638",
+  "total_passengers": "326385",
+  "total_seats": "446381",
+  "total_load_factor": "73.1",
+  "total_distance_flight_sm": "1767.460291734198"
+ },
+ {
+  "origin_airport_code": "ANC",
+  "reporting_month": "2026-07-01T00:00:00.000",
+  "total_departures": "9087",
+  "total_passengers": "393566",
+  "total_seats": "493315",
+  "total_load_factor": "79.8",
+  "total_distance_flight_sm": "1625.427753934192"
+ },
+ {
+  "origin_airport_code": "BOS",
+  "reporting_month": "2026-04-01T00:00:00.000",
+  "total_departures": "16533",
+  "total_passengers": "1845175",
+  "total_seats": "2320032",
+  "total_load_factor": "79.5",
+  "total_distance_flight_sm": "1200.555313615194"
+ },
+ {
+  "origin_airport_code": "BOS",
+  "reporting_month": "2026-05-01T00:00:00.000",
+  "total_departures": "17046",
+  "total_passengers": "1865413",
+  "total_seats": "2357997",
+  "total_load_factor": "79.1",
+  "total_distance_flight_sm": "1199.524815205913"
+ },
+ {
+  "origin_airport_code": "BOS",
+  "reporting_month": "2026-06-01T00:00:00.000",
+  "total_departures": "17150",
+  "total_passengers": "1911269",
+  "total_seats": "2309615",
+  "total_load_factor": "82.8",
+  "total_distance_flight_sm": "1214.242740524781"
+ },
+ {
+  "origin_airport_code": "BOS",
+  "reporting_month": "2026-07-01T00:00:00.000",
+  "total_departures": "17676",
+  "total_passengers": "2013353",
+  "total_seats": "2363679",
+  "total_load_factor": "85.2",
+  "total_distance_flight_sm": "1208.91989137814"
+ },
+ {
+  "origin_airport_code": "SNA",
+  "reporting_month": "2026-04-01T00:00:00.000",
+  "total_departures": "4201",
+  "total_passengers": "452129",
+  "total_seats": "561072",
+  "total_load_factor": "80.6",
+  "total_distance_flight_sm": "756.2116162818377"
+ },
+ {
+  "origin_airport_code": "SNA",
+  "reporting_month": "2026-05-01T00:00:00.000",
+  "total_departures": "4359",
+  "total_passengers": "457442",
+  "total_seats": "578395",
+  "total_load_factor": "79.1",
+  "total_distance_flight_sm": "780.7244780913054"
+ },
+ {
+  "origin_airport_code": "SNA",
+  "reporting_month": "2026-06-01T00:00:00.000",
+  "total_departures": "4319",
+  "total_passengers": "481802",
+  "total_seats": "597071",
+  "total_load_factor": "80.7",
+  "total_distance_flight_sm": "794.393146561704"
+ },
+ {
+  "origin_airport_code": "SNA",
+  "reporting_month": "2026-07-01T00:00:00.000",
+  "total_departures": "4528",
+  "total_passengers": "486619",
+  "total_seats": "627364",
+  "total_load_factor": "77.6",
+  "total_distance_flight_sm": "788.5600706713781"
+ }
+]
