@@ -40,3 +40,21 @@ def test_persist_live_can_be_disabled(tmp_path: Path) -> None:
     store = SnapshotStore(tmp_path)
     DataProvider(store, persist_live=False).fetch_text("x.csv", source="S", live=lambda: "h\n1\n")
     assert store.load("x.csv") is None
+
+
+def test_invalid_live_content_does_not_overwrite_good_snapshot(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    store.save("x.csv", "h\n1\n", source="S", as_of="2026-06")
+
+    def reject(text: str) -> None:
+        if not text.startswith("h"):
+            raise ValueError("not a csv")
+
+    result = DataProvider(store).fetch_text(
+        "x.csv", source="S", live=lambda: "<html>maintenance</html>", validate=reject
+    )
+    assert result.provenance.mode is DataMode.SNAPSHOT
+    assert result.text == "h\n1\n"
+    loaded = store.load("x.csv")
+    assert loaded is not None
+    assert loaded[0] == "h\n1\n"

@@ -36,3 +36,17 @@ def test_catalog_live_then_snapshot_fallback(tmp_path: Path) -> None:
     assert offline.provenance.mode is DataMode.SNAPSHOT
     assert offline.get("anc") is not None
     assert offline.get("JFK") is None  # not in coverage
+
+
+@respx.mock
+def test_error_page_with_200_keeps_last_good_snapshot(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
+    route = respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
+    OurAirportsCatalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+
+    route.respond(200, text="<html>Service unavailable</html>")
+    catalog = OurAirportsCatalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+
+    assert catalog.provenance.mode is DataMode.SNAPSHOT
+    assert catalog.get("ANC") is not None

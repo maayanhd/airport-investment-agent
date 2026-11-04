@@ -25,11 +25,20 @@ class DataProvider:
         self._persist_live = persist_live
 
     def fetch_text(
-        self, name: str, *, source: str, live: Callable[[], str], as_of: str = ""
+        self,
+        name: str,
+        *,
+        source: str,
+        live: Callable[[], str],
+        validate: Callable[[str], object] = lambda _: None,
+        as_of: str = "",
     ) -> Fetched:
+        """Live first. `validate` must raise ValueError on bad content, so a 200 response that is
+        an error page or a truncated file never overwrites the last good snapshot."""
         try:
             text = live()
-        except FetchError:
+            validate(text)
+        except (FetchError, ValueError):
             return self._from_snapshot(name, source)
         if self._persist_live:
             self._store.save(name, text, source=source, as_of=as_of)
