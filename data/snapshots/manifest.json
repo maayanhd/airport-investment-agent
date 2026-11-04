@@ -1,7 +1,7 @@
 {
   "bts_ontime_delays.json": {
     "source": "BTS On-Time Reporting (reporting carriers only)",
-    "fetched_at": "2026-11-04T22:59:49.158834Z",
+    "fetched_at": "2026-11-04T23:32:28.152630Z",
     "as_of": "2026-08",
     "sha256": "be8fb4890558655e2b96a5532137dac6f67c86a220f40c1a636d8d1f558e86f3"
   },

@@ -1,11 +1,16 @@
 # All tunable assumptions live here and are echoed to the user as "assumptions".
 long_haul_min_miles: 1500
 new_england_states: [CT, MA, ME, NH, RI, VT]
-score_weights:
-  passenger_growth: 0.3
-  load_factor: 0.3
-  delay_pressure: 0.2
-  capacity_headroom: 0.2
+score_weights:                  # must sum to 1; every component is "higher = stronger expansion case"
+  passenger_growth: 0.3         # passengers, last 12 months vs the 12 before
+  load_factor: 0.3              # percent of seats filled, last 12 months
+  delay_pressure: 0.2           # share of operated flights departing 15+ minutes late
+  capacity_gap: 0.2             # passenger growth minus seat growth (demand outgrowing supply)
+score_bounds:                   # [value scored 0, value scored 1]; clipped outside. About the 5th-95th
+  passenger_growth: [-0.10, 0.10]   # percentile of the 97 covered airports on 2026-11 data, rounded
+  load_factor: [65, 85]
+  delay_pressure: [0.15, 0.30]
+  capacity_gap: [-0.05, 0.05]
 min_confidence: 0.6
 snapshot_dir: data/snapshots
 max_data_age_months: 6          # older data is flagged stale (BTS lags 2-4 months)

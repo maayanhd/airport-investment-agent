@@ -2,7 +2,7 @@
 
 A conversational agent that helps analysts find US airports where modernization is most likely to pay off, based on passenger and flight-capacity pressure. Built as a one-day exercise; this README is the decision log, written before the code and updated as the system is built.
 
-> Status: data foundation (PR #2) done: HTTP fetcher, snapshots, provider fallback, airport catalog. Sections marked _TBD_ are filled in as milestones land.
+> Status: data layer (catalog, BTS traffic, On-Time delays) and KPIs and scoring done. Sections marked _TBD_ are filled in as milestones land.
 
 ## 1. Scope
 In scope: US airports, public aviation data, questions about congestion, long-haul share, capacity pressure and expansion candidates, with conversational follow-ups.
@@ -54,7 +54,25 @@ Human review does **not** sit in the chat path (it would break a conversational 
 _TBD (M3/M4)_: data, KPIs, scoring and number validation are plain Python; the LLM only chooses tools, resolves follow-ups and writes the explanation from tool output.
 
 ## 5. Scoring methodology
-_TBD (M2)_
+All of it is plain Python (`kpis.py`, `scoring.py`); the LLM never computes or changes a number.
+
+**KPIs** (per airport, from the last 12 months of each source; both months are shown):
+- *Passenger growth*: passengers in the last 12 months vs the 12 before (needs 24 consecutive months).
+- *Load factor*: total passengers / total seats over the last 12 months, from the counts and not from the rounded percentage the API gives.
+- *Capacity gap*: passenger growth minus seat growth. Positive means demand is outgrowing supply.
+- *Delay pressure*: share of operated flights that left 15+ minutes late (On-Time, reporting carriers only). Needs 9 consecutive months, so seasonal airports (ACK, MVY, HYA) get none and the output says so.
+- Also computed for explanations: cancellation rate, average delay minutes, and the departure-weighted average flight distance.
+
+**Score** = 100 x sum(weight x scaled KPI) / sum(weights of the KPIs that have data). Each KPI is scaled to 0..1 by a fixed range from `config.yaml` (`score_bounds`, clipped outside) and weighted by `score_weights` (0.3 / 0.3 / 0.2 / 0.2). Every component points toward "stronger case for expansion": growth, a fuller plane, more delays and demand outgrowing seats.
+
+**Confidence** is the total weight of the KPIs that had data. Below `min_confidence` (0.6) there is no score and the reason is given. A score built from 80% of the weight is shown with that confidence and the missing KPI named.
+
+Why these choices:
+- *Fixed ranges, not rank or min-max across the airports compared.* A score then does not change when the user adds an airport or asks a follow-up, and one outlier cannot squash everyone else. The ranges are roughly the 5th to 95th percentile of the 97 covered airports on the 2026-11 data, rounded; they are assumptions and are echoed to the user.
+- *No ML.* There is no label ("this expansion paid off") to train on, 97 airports is little data, and the score must be explainable line by line.
+- *Proxies, said as such.* Delay pressure is a congestion proxy (airline problems also cause delays). "Unmet demand" is not observed: the capacity gap and the load factor are the closest signals. Average flight distance is not a long-haul share: BTS has no route-level distance in the public API.
+- *Partial scores are not hidden.* An airport missing one KPI can rank above one that has all four, because the remaining weights are renormalized. That is why confidence and the missing KPI are always shown next to it.
+- *Check it:* `airport-agent score BOS BDL SFO` prints each component, its scaled value, weight and points.
 
 ## 6. Model choice and cost
 Smallest model that passes the eval for each step. Router/agent loop starts with a Haiku-class model, escalate only if evals show a gap; judge is Sonnet-class and offline only. _Measured table TBD (M6)_.

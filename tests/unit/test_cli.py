@@ -1,4 +1,5 @@
 import io
+import json
 import re
 import zipfile
 from collections.abc import Callable
@@ -305,3 +306,61 @@ def test_status_marks_an_old_snapshot_stale(tmp_path: Path, capsys: Out) -> None
 
     assert main(["data", "status"], root=tmp_path, settings=old) == 0
     assert "STALE" in capsys.readouterr().out
+
+
+def _two_years_of_traffic() -> str:
+    rows = []
+
+    for i in range(26):
+        index = 2024 * 12 + 5 + i
+        rows.append(
+            {
+                "origin_airport_code": "ANC",
+                "reporting_month": f"{index // 12}-{index % 12 + 1:02d}-01T00:00:00.000",
+                "total_departures": "100",
+                "total_passengers": str(1000 + 10 * i),
+                "total_seats": "2000",
+                "total_load_factor": "50.0",
+                "total_distance_flight_sm": "500",
+            }
+        )
+
+    return json.dumps(rows)
+
+
+@respx.mock
+def test_score_prints_components_and_what_is_missing(tmp_path: Path, capsys: Out) -> None:
+    respx.get(BTS_URL).respond(200, text=_two_years_of_traffic())
+    only_anc = SETTINGS.model_copy(update={"coverage_airports": ["ANC"]})
+
+    assert main(["score", "anc"], root=tmp_path, settings=only_anc) == 0
+
+    out = capsys.readouterr().out
+    assert "ANC | score " in out
+    assert "confidence 80%" in out  # no delay snapshot, so 80% of the weight has data
+    assert "passenger_growth" in out
+    assert "missing (not enough data): delay_pressure" in out
+
+
+@respx.mock
+def test_score_says_when_there_is_too_little_history(tmp_path: Path, capsys: Out) -> None:
+    respx.get(BTS_URL).respond(200, text=SAMPLE)  # only 4 months
+
+    assert main(["score", "ANC"], root=tmp_path, settings=SETTINGS) == 0
+
+    out = capsys.readouterr().out
+    assert "ANC | no score" in out
+    assert "need 60%" in out
+
+
+def test_score_rejects_airports_outside_coverage(tmp_path: Path, capsys: Out) -> None:
+    assert main(["score", "ANC", "XXX"], root=tmp_path, settings=SETTINGS) == 2
+    assert "not in the coverage list: XXX" in capsys.readouterr().out
+
+
+@respx.mock
+def test_score_reports_when_traffic_data_is_unavailable(tmp_path: Path, capsys: Out) -> None:
+    respx.get(BTS_URL).respond(503)
+
+    assert main(["score", "ANC"], root=tmp_path, settings=SETTINGS) == 1
+    assert "no valid snapshot" in capsys.readouterr().out
