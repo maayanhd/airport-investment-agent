@@ -1,0 +1,7 @@
+"id","ident","type","name","latitude_deg","longitude_deg","iso_country","iso_region","iata_code"
+1,"PANC","large_airport","Ted Stevens Anchorage International Airport",61.1744,-149.996,"US","US-AK","ANC"
+2,"KBOS","large_airport","General Edward Lawrence Logan International Airport",42.3643,-71.0052,"US","US-MA","BOS"
+3,"KBDL","medium_airport","Bradley International Airport",41.9389,-72.6832,"US","US-CT","BDL"
+4,"EGLL","large_airport","London Heathrow Airport",51.47,-0.4543,"GB","GB-ENG","LHR"
+5,"KXXX","heliport","Some Heliport",40.0,-70.0,"US","US-MA","BOS"
+6,"KJFK","large_airport","John F Kennedy International Airport",40.6398,-73.7789,"US","US-NY","JFK"
