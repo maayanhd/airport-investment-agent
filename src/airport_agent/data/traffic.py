@@ -5,8 +5,9 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from airport_agent.config import Settings
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider
 from airport_agent.domain import MonthlyTraffic, Provenance
@@ -43,23 +44,50 @@ def _to_traffic(row: _Row) -> MonthlyTraffic:
     )
 
 
-def parse_traffic(text: str, coverage: Iterable[str]) -> dict[str, list[MonthlyTraffic]]:
-    """Raises ValueError, and only ValueError, on unusable content."""
+def _read_rows(text: str) -> list[_Row]:
+    """Name the first bad row and field, so the fallback note says what was wrong."""
+    try:
+        return _ROWS.validate_json(text)
+    except ValidationError as error:
+        first = error.errors()[0]
+        where = ".".join(str(part) for part in first["loc"]) or "response"
+
+        problems = error.error_count()
+
+        raise ValueError(f"BTS {where}: {first['msg']} ({problems} problem(s))") from error
+
+
+def parse_traffic(
+    text: str, coverage: Iterable[str], *, min_months: int, min_airport_share: float
+) -> dict[str, list[MonthlyTraffic]]:
+    """Raises ValueError, and only ValueError, on unusable content. That includes a response
+    that looks cut off or too thin to replace a good snapshot: it reached the row limit, or
+    fewer than `min_airport_share` of the covered airports have `min_months` months."""
     wanted = {code.upper() for code in coverage}
+    rows = _read_rows(text)
+
+    if len(rows) >= MAX_ROWS:
+        raise ValueError(f"BTS response reached the {MAX_ROWS} row limit and may be truncated")
+
     series: dict[str, list[MonthlyTraffic]] = defaultdict(list)
 
-    for row in _ROWS.validate_json(text):
+    for row in rows:
         if row.origin_airport_code in wanted:
             series[row.origin_airport_code].append(_to_traffic(row))
-
-    if not series:
-        raise ValueError("no covered airport found in BTS response")
 
     for code, months in series.items():
         months.sort(key=lambda m: m.month)
 
         if len({m.month for m in months}) != len(months):
             raise ValueError(f"duplicate months for {code} in BTS response")
+
+    complete = sum(len(months) >= min_months for months in series.values())
+
+    if complete < min_airport_share * len(wanted):
+        raise ValueError(
+            f"BTS response too thin: {complete} of {len(wanted)} covered airports have "
+            f"{min_months}+ months (need {min_airport_share:.0%})"
+        )
 
     return dict(series)
 
@@ -74,7 +102,6 @@ class TrafficHistory:
         self._series = series
         self.provenance = provenance
         self.missing_codes = sorted({c.upper() for c in coverage} - series.keys())
-        self.latest_month = max(m.month for months in series.values() for m in months)
 
     def series(self, iata: str) -> list[MonthlyTraffic]:
         return self._series.get(iata.upper(), [])
@@ -104,23 +131,29 @@ def _latest_label(series: dict[str, list[MonthlyTraffic]]) -> str:
 def load_traffic(
     provider: DataProvider,
     fetcher: HttpFetcher,
-    coverage: Iterable[str],
+    settings: Settings,
     *,
-    months: int,
+    persist: bool = True,
     today: date | None = None,
 ) -> TrafficHistory:
-    wanted = tuple(code.upper() for code in coverage)
+    wanted = tuple(code.upper() for code in settings.coverage_airports)
 
     if not all(re.fullmatch(r"[A-Z]{3}", code) for code in wanted):
         raise ValueError("coverage must be 3-letter IATA codes")
 
-    since = _months_back(today or date.today(), months)
+    since = _months_back(today or date.today(), settings.traffic_history_months)
     fetched = provider.fetch(
         SNAPSHOT_NAME,
         source=SOURCE,
         live=lambda: fetcher.get_text(BTS_URL, params=_query(wanted, since)),
-        parse=lambda text: parse_traffic(text, wanted),
+        parse=lambda text: parse_traffic(
+            text,
+            wanted,
+            min_months=settings.traffic_min_months,
+            min_airport_share=settings.traffic_min_airport_share,
+        ),
         as_of=_latest_label,
+        persist=persist,
     )
 
     return TrafficHistory(fetched.value, fetched.provenance, wanted)

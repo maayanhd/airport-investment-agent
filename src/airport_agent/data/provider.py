@@ -41,18 +41,21 @@ class DataProvider:
         live: Callable[[], str],
         parse: Callable[[str], T],
         as_of: Callable[[T], str] = _no_as_of,
+        persist: bool = True,
     ) -> Fetched[T]:
+        """`parse` and `as_of` must raise ValueError on bad content, so it never overwrites a snapshot."""
         try:
             text = live()
             value = parse(text)
+            data_month = as_of(value)
         except (FetchError, ValueError) as error:
             reason = f"{type(error).__name__}: {error}"[:MAX_NOTE_CHARS]
             logger.warning("%s: live data rejected, using snapshot (%s)", source, reason)
 
             return self._from_snapshot(name, source, reason, parse)
 
-        data_month = as_of(value)
-        self._try_save(name, text, source, data_month)
+        if persist:
+            self._try_save(name, text, source, data_month)
 
         provenance = Provenance(
             source=source, mode=DataMode.LIVE, fetched_at=datetime.now(UTC), as_of=data_month

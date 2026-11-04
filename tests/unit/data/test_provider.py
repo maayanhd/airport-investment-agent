@@ -93,3 +93,29 @@ def test_snapshot_write_failure_still_returns_live_data(
     assert result.provenance.mode is DataMode.LIVE
     assert result.value == "h\n1\n"
     assert "could not save snapshot" in caplog.text
+
+
+def test_persist_false_does_not_write(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+
+    result = DataProvider(store).fetch(
+        "x.csv", source="S", live=lambda: "h\n1\n", parse=str, persist=False
+    )
+
+    assert result.provenance.mode is DataMode.LIVE
+    assert store.load("x.csv") is None
+
+
+def test_as_of_failure_falls_back_instead_of_crashing(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    store.save("x.csv", "h\n1\n", source="S", as_of="2026-06")
+
+    def bad_as_of(_value: str) -> str:
+        raise ValueError("no data month")
+
+    result = DataProvider(store).fetch(
+        "x.csv", source="S", live=lambda: "h\n2\n", parse=str, as_of=bad_as_of
+    )
+
+    assert result.provenance.mode is DataMode.SNAPSHOT
+    assert result.value == "h\n1\n"

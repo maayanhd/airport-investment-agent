@@ -8,7 +8,9 @@ score_weights:
   capacity_headroom: 0.2
 min_confidence: 0.6
 snapshot_dir: data/snapshots
-traffic_history_months: 24
+traffic_history_months: 30      # window requested; BTS lags 3-4 months, so 30 yields about 26
+traffic_min_months: 24          # last 12 vs prior 12 needs 24 months per airport
+traffic_min_airport_share: 0.9  # share of coverage that must have min months, else keep the snapshot
 router_model: claude-haiku-5-5
 judge_model: claude-sonnet-5-5
 coverage_airports: [ATL, LAX, ORD, DFW, DEN, JFK, SFO, SEA, LAS, MCO, EWR, CLT, PHX, IAH, MIA, BOS, MSP, FLL, DTW, PHL, LGA, BWI, SLC, SAN, IAD, DCA, TPA, BNA, AUS, MDW, HNL, DAL, PDX, STL, RDU, HOU, SMF, MSY, SJC, OAK, SNA, SAT, MCI, CLE, IND, PIT, CMH, CVG, OGG, MKE, JAX, RSW, ONT, BUR, LGB, ABQ, OMA, BUF, ANC, FAI, JNU, BET, OTZ, KTN, SIT, CDV, ADQ, OME, PSP, TUS, RNO, BOI, TUL, OKC, MEM, SDF, RIC, ORF, CHS, SAV, GRR, ALB, ROC, SYR, PVD, MHT, PWM, BGR, BTV, ORH, BDL, HVN, HYA, ACK, MVY, PSM, LEB]

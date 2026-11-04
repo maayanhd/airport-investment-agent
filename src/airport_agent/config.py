@@ -2,9 +2,10 @@
 
 import re
 from pathlib import Path
+from typing import Self
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from airport_agent.domain import IATA_PATTERN
 
@@ -21,6 +22,8 @@ class Settings(BaseModel):
     coverage_airports: list[str]
     snapshot_dir: Path
     traffic_history_months: int = Field(ge=13)
+    traffic_min_months: int = Field(ge=13)
+    traffic_min_airport_share: float = Field(gt=0, le=1)
 
     @field_validator("coverage_airports")
     @classmethod
@@ -28,6 +31,13 @@ class Settings(BaseModel):
         if len(set(codes)) != len(codes) or any(not re.fullmatch(IATA_PATTERN, c) for c in codes):
             raise ValueError("coverage_airports must be unique 3-letter uppercase IATA codes")
         return codes
+
+    @model_validator(mode="after")
+    def _window_covers_minimum(self) -> Self:
+        if self.traffic_history_months < self.traffic_min_months:
+            raise ValueError("traffic_history_months must be at least traffic_min_months")
+
+        return self
 
 
 def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
