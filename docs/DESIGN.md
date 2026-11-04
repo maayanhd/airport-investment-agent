@@ -31,7 +31,17 @@ A KPI is `None` when the data cannot support it (too few or non-consecutive mont
 
 **Confidence and abstention.** Confidence is the total weight of the components that have data (1.0 when all four do). A missing KPI is never filled in: the remaining weights are rescaled so the score still runs 0 to 100, and the answer lists what is missing. Below `min_confidence` (0.6) the airport gets no score and the reason is shown. Because a rescaled score is not comparable with a full one, `rank` puts airports with every component first, then partial ones, and every answer shows its confidence. Data age and live-versus-snapshot are not part of confidence; they are printed next to the score (`stale`, the snapshot note) so the reader sees them. If the delay source is unavailable the CLI says so once, because then every airport is missing `delay_pressure`, not just one.
 
-**Worked example.** _TBD once the scoring function exists (one airport, all four components)._
+**Worked example (BOS, 2026-11 data, `airport-agent score BOS`).** Each row is raw value, position in the fixed range from 0 to 1, weight, and points (scaled × weight × 100).
+
+| Component | Value | Scaled | Weight | Points |
+|---|---|---|---|---|
+| passenger growth | -2.3% | 0.38 | 0.30 | 11.5 |
+| load factor | 81.3% | 0.98 | 0.30 | 29.4 |
+| delay pressure | 24.2% late 15+ min | 0.61 | 0.20 | 12.2 |
+| capacity gap | -0.5 pts | 0.45 | 0.20 | 9.1 |
+| **Score** | | | | **62.2 / 100** (confidence 100%) |
+
+If the delay data were missing, confidence would be 80%, the other three weights would be divided by 0.8 so the score still runs to 100, and the answer would list `delay_pressure` as missing.
 
 ## 2. Key tradeoffs
 

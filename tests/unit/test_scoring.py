@@ -149,7 +149,7 @@ def test_more_growth_never_lowers_the_score(low: float, step: float) -> None:
     assert better >= worse - 1e-9
 
 
-def test_every_covered_airport_gets_an_honest_result_from_the_committed_snapshots() -> None:
+def _committed_scores() -> list[AirportScore]:
     traffic = parse_traffic(
         (SNAPSHOTS / "bts_t100_traffic.json").read_text(),
         SETTINGS.coverage_airports,
@@ -162,7 +162,7 @@ def test_every_covered_airport_gets_an_honest_result_from_the_committed_snapshot
         min_months=SETTINGS.delays_min_months,
         min_airport_share=SETTINGS.min_airport_share,
     )
-    scores = [
+    return [
         _score(
             compute_kpis(
                 code,
@@ -173,6 +173,10 @@ def test_every_covered_airport_gets_an_honest_result_from_the_committed_snapshot
         )
         for code in SETTINGS.coverage_airports
     ]
+
+
+def test_every_covered_airport_gets_an_honest_result_from_the_committed_snapshots() -> None:
+    scores = _committed_scores()
     values = [s.score for s in scores if s.score is not None]
 
     assert len(scores) == 97
@@ -190,3 +194,19 @@ def test_rank_puts_partial_scores_after_complete_ones() -> None:
     assert partial.score is not None and complete.score is not None
     assert partial.score > complete.score
     assert [s.iata for s in rank([partial, complete])] == ["BBB", "AAA"]
+
+
+MAX_CLIPPED_SHARE = 0.15  # today's worst case is 6 of 97 airports
+
+
+def test_no_component_range_clips_many_airports_to_either_end() -> None:
+    scaled: dict[str, list[float]] = {name: [] for name in SETTINGS.score_weights}
+
+    for score in _committed_scores():
+        for component in score.components:
+            scaled[component.name].append(component.scaled)
+
+    for name, values in scaled.items():
+        clipped = sum(value in (0.0, 1.0) for value in values)
+
+        assert clipped <= MAX_CLIPPED_SHARE * len(values), f"{name}: {clipped} of {len(values)}"

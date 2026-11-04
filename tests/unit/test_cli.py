@@ -11,12 +11,13 @@ import pytest
 import respx
 
 from airport_agent import cli
-from airport_agent.cli import main
+from airport_agent.cli import SHOWN_VALUE, main
 from airport_agent.config import load_settings
 from airport_agent.data.history import History
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import BTS_URL, SNAPSHOT_NAME
 from airport_agent.domain import DataMode, Provenance
+from airport_agent.scoring import COMPONENTS
 
 SAMPLE = (Path(__file__).parents[1] / "fixtures" / "bts_t100_sample.json").read_text(
     encoding="utf-8"
@@ -375,3 +376,7 @@ def test_score_lists_a_repeated_airport_once(tmp_path: Path, capsys: Out) -> Non
 
     assert main(["score", "ANC", "anc", "ANC"], root=tmp_path, settings=only_anc) == 0
     assert capsys.readouterr().out.count("ANC | score ") == 1
+
+
+def test_every_score_component_has_a_display_format() -> None:
+    assert SHOWN_VALUE.keys() == COMPONENTS.keys()
