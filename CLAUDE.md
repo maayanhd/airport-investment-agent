@@ -35,7 +35,17 @@ An agent that helps analysts at an airport-modernization investor find US airpor
 - Tests are part of every change: unit, contract (recorded responses, no network in CI), integration with a fake LLM, e2e smoke. Evals (40-question set, routing metrics, LLM-judge rubric, ledger) are separate from tests.
 - Choose the cheapest model that passes the eval for each step, and keep the measured results in the README.
 - Sparse, readable code: one blank line between logical steps (setup, work, result), after a multi-line call or block, around `if`/`try` blocks, and before the final `return` when the body has more than one step. Skip blank lines in 2–3 line functions. `ruff format` keeps single blank lines, so this is a convention, not enforced.
-- Enforced by `ruff`, `mypy --strict`, `pytest` and CI. Keep functions small and complexity low (C901 max 10).
+- Function size: aim for 20 lines or fewer, and split above about 30. A function does one thing at one level; if the body reads as several named steps, make each step a helper. Max 5 arguments (PLR0913): group values that travel together into a dataclass or pass the object that owns them.
+- Names say what the value is, not its type or shape: `covered_codes`, not `lst` or `data`; `min_airport_share`, not `thr`. No single-letter names except short loop indices and comprehension variables. Booleans read as questions (`is_live`, `has_snapshot`). Functions are verbs, classes are nouns. Units go in the name when they matter (`months_back`, `avg_flight_distance_miles`).
+- Python practices:
+  - Full type hints on everything, modern syntax (`list[str]`, `X | None`); no `Any` unless a boundary forces it, and then say why.
+  - Prefer `@dataclass(frozen=True)` or pydantic models over dicts and tuples for structured data; `Enum` over magic strings; `pathlib` over `os.path`.
+  - No mutable default arguments, no bare `except`, no `print` outside the CLI (use `logging`). Catch the narrowest exception and chain with `raise ... from error`.
+  - Early returns and guard clauses over deep nesting. Comprehensions only while they stay on one readable line.
+  - Name constants (`MAX_ROWS`); no magic numbers in logic. Tunable values live in `config.yaml`.
+  - Docstrings only where behaviour is not obvious from the name and tests, and then one line. Comments explain why, never what.
+  - Keep a function pure unless it is at the edge (`data/`, CLI); pass the clock, fetcher and store in rather than reaching for globals.
+- Enforced by `ruff`, `mypy --strict`, `pytest` and CI (C901 max 10, PLR0913 max 5 arguments). The size and naming rules above are conventions for review, not lint.
 
 ## Workflow
 - One branch and one PR per milestone; `main` is protected (PR, green `checks`, squash merge). Fill in the PR template.

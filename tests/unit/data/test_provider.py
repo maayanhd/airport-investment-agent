@@ -98,8 +98,8 @@ def test_snapshot_write_failure_still_returns_live_data(
 def test_persist_false_does_not_write(tmp_path: Path) -> None:
     store = SnapshotStore(tmp_path)
 
-    result = DataProvider(store).fetch(
-        "x.csv", source="S", live=lambda: "h\n1\n", parse=str, persist=False
+    result = DataProvider(store, persist=False).fetch(
+        "x.csv", source="S", live=lambda: "h\n1\n", parse=str
     )
 
     assert result.provenance.mode is DataMode.LIVE
