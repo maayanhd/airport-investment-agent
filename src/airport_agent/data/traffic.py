@@ -3,6 +3,7 @@
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date
+from operator import attrgetter
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -64,7 +65,7 @@ def _group_by_airport(rows: list[_Row], wanted: set[str]) -> dict[str, list[Mont
             series[row.origin_airport_code].append(_to_traffic(row))
 
     for code, months in series.items():
-        months.sort(key=lambda m: m.month)
+        months.sort(key=attrgetter("month"))
 
         if len({m.month for m in months}) != len(months):
             raise ValueError(f"duplicate months for {code} in BTS response")
