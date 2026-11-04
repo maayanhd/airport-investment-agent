@@ -1,8 +1,8 @@
 {
   "bts_t100_traffic.json": {
     "as_of": "2026-07",
-    "fetched_at": "2026-11-04T21:35:35.947024Z",
-    "sha256": "db57b6dd99f25607c571fc09441d45a44bc0fa27457db58b70c22616da11f145",
+    "fetched_at": "2026-11-04T22:09:12.880190Z",
+    "sha256": "cae78d761fa4211ca25917cc3eea340cdcb5ed68f1aa6ac6f65f2a4befa47f47",
     "source": "BTS T-100 (summary by origin airport)"
   }
 }
