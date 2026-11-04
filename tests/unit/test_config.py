@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from airport_agent.config import Settings, load_settings
 
@@ -42,3 +43,21 @@ def test_delays_window_must_cover_the_minimum_months() -> None:
 
     with pytest.raises(ValueError, match="delays_months"):
         Settings.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    ("weights", "message"),
+    [
+        ({"passenger_growth": 0.5, "capacity_headroom": 0.5}, "unknown score components"),
+        ({"passenger_growth": 1.5, "load_factor": -0.5}, "must not be negative"),
+    ],
+)
+def test_weights_must_name_known_components_and_not_be_negative(
+    weights: dict[str, float], message: str
+) -> None:
+    bounds = {name: (0.0, 1.0) for name in weights}
+
+    with pytest.raises(ValidationError, match=message):
+        load_settings().model_validate(
+            {**load_settings().model_dump(), "score_weights": weights, "score_bounds": bounds}
+        )

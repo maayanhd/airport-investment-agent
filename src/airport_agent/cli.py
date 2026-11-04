@@ -7,13 +7,15 @@ from enum import StrEnum
 from pathlib import Path
 
 from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
-from airport_agent.data.delays import load_delays, refresh_delays
+from airport_agent.data.delays import DelayHistory, load_delays, refresh_delays
 from airport_agent.data.history import History, data_age_months
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import load_traffic
 from airport_agent.domain import DataMode
+from airport_agent.kpis import AirportKpis, compute_kpis
+from airport_agent.scoring import AirportScore, score_airport
 
 ROOT = DEFAULT_CONFIG_PATH.parent
 SHOWN_MONTHS = 6
@@ -179,14 +181,111 @@ def _show(code: str, settings: Settings, store: SnapshotStore) -> int:
     return status
 
 
+SHOWN_VALUE = {
+    "passenger_growth": lambda v: f"{v:+.1%}",
+    "load_factor": lambda v: f"{v:.1f}%",
+    "delay_pressure": lambda v: f"{v:.1%} late 15+ min",
+    "capacity_gap": lambda v: f"{100 * v:+.1f} pts",
+}
+
+
+def _print_score(result: AirportScore, through: str) -> None:
+    shown = "no score" if result.score is None else f"score {result.score:.1f} / 100"
+    print(f"{result.iata} | {shown} | confidence {result.confidence:.0%} | {through}")
+
+    if result.reason:
+        print(f"  no score: {result.reason}")
+
+    for c in result.components:
+        value = SHOWN_VALUE[c.name](c.value)
+        print(
+            f"  {c.name:<17} {value:<19} scaled {c.scaled:.2f} x {c.weight:.2f} = {c.points:5.1f}"
+        )
+
+    if result.missing:
+        print(f"  missing (not enough data): {', '.join(result.missing)}")
+
+
+def _through(kpis: AirportKpis) -> str:
+    parts = [
+        f"{name} through {month:%Y-%m}"
+        for name, month in (("traffic", kpis.traffic_through), ("delays", kpis.delays_through))
+        if month
+    ]
+
+    return ", ".join(parts)
+
+
+def _delays_or_none(settings: Settings, store: SnapshotStore) -> DelayHistory | None:
+    try:
+        return load_delays(DataProvider(store, persist=False), settings)
+    except DataUnavailableError as error:
+        print(f"data: delays unavailable, so delay_pressure is missing for every airport ({error})")
+
+        return None
+
+
+def _print_sources(traffic: History[object], delays: History[object] | None) -> None:
+    for label, history in (("traffic", traffic), ("delays", delays)):
+        if history is None:
+            continue
+
+        source = history.provenance
+        print(f"data: {label} {source.mode.value}, {source.source}, data month {source.as_of}")
+
+        if source.note:
+            print(f"  note: {source.note}")
+
+
+def _score(codes: Sequence[str], settings: Settings, store: SnapshotStore) -> int:
+    wanted = list(dict.fromkeys(code.upper() for code in codes))
+    unknown = [code for code in wanted if code not in settings.coverage_airports]
+
+    if unknown:
+        print(f"not in the coverage list: {', '.join(unknown)}")
+
+        return 2
+
+    try:
+        traffic = load_traffic(DataProvider(store, persist=False), HttpFetcher(), settings)
+    except DataUnavailableError as error:
+        print(error)
+
+        return 1
+
+    delays = _delays_or_none(settings, store)
+
+    _print_sources(traffic, delays)
+
+    for code in wanted:
+        kpis = compute_kpis(
+            code,
+            traffic.series(code),
+            delays.series(code) if delays else [],
+            min_delay_months=settings.delays_min_months,
+        )
+        result = score_airport(
+            kpis,
+            weights=settings.score_weights,
+            bounds=settings.score_bounds,
+            min_confidence=settings.min_confidence,
+        )
+        _print_score(result, _through(kpis))
+
+    print("capacity_gap = passenger growth minus seat growth; delay_pressure is a congestion proxy")
+    print("scaled = position inside the fixed range in config.yaml (score_bounds), from 0 to 1")
+
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None, *, root: Path = ROOT, settings: Settings | None = None
 ) -> int:
     parser = argparse.ArgumentParser(prog="airport-agent")
-    commands = (
-        parser.add_subparsers(dest="command", required=True)
-        .add_parser("data")
-        .add_subparsers(dest="action", required=True)
+    top = parser.add_subparsers(dest="command", required=True)
+    commands = top.add_parser("data").add_subparsers(dest="action", required=True)
+    top.add_parser("score", help="expansion score and its components").add_argument(
+        "airports", nargs="+"
     )
     commands.add_parser("status", help="list saved snapshots and check their checksums")
     refresh = commands.add_parser("refresh", help="fetch live data and save it as the snapshot")
@@ -200,6 +299,9 @@ def main(
 
     settings = settings or load_settings()
     store = SnapshotStore(root / settings.snapshot_dir)
+
+    if args.command == "score":
+        return _score(args.airports, settings, store)
 
     if args.action == "status":
         return _status(store, settings)
