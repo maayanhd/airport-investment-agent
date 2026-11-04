@@ -69,15 +69,28 @@ class DataProvider:
         except OSError as error:
             logger.warning("%s: could not save snapshot %s (%s)", source, name, error)
 
+    def read_snapshot(self, name: str, *, source: str, parse: Callable[[str], T]) -> Fetched[T]:
+        """Snapshot only, for sources too big to download while serving a request."""
+        return self._load(name, source, parse, prefix="", note="")
+
     def _from_snapshot(
         self, name: str, source: str, reason: str, parse: Callable[[str], T]
+    ) -> Fetched[T]:
+        return self._load(
+            name,
+            source,
+            parse,
+            prefix=f"live data unusable ({reason}) and ",
+            note=f"live data unavailable, snapshot used ({reason})",
+        )
+
+    def _load(
+        self, name: str, source: str, parse: Callable[[str], T], *, prefix: str, note: str
     ) -> Fetched[T]:
         loaded = self._store.load(name)
 
         if loaded is None:
-            raise DataUnavailableError(
-                f"{source}: live data unusable ({reason}) and no valid snapshot for {name}"
-            )
+            raise DataUnavailableError(f"{source}: {prefix}no valid snapshot for {name}")
 
         text, entry = loaded
 
@@ -85,7 +98,7 @@ class DataProvider:
             value = parse(text)
         except ValueError as error:
             raise DataUnavailableError(
-                f"{source}: live data unusable ({reason}) and snapshot {name} is unreadable"
+                f"{source}: {prefix}snapshot {name} is unreadable"
             ) from error
 
         provenance = Provenance(
@@ -93,7 +106,7 @@ class DataProvider:
             mode=DataMode.SNAPSHOT,
             fetched_at=entry.fetched_at,
             as_of=entry.as_of,
-            note=f"live data unavailable, snapshot used ({reason})",
+            note=note,
         )
 
         return Fetched(value, provenance)

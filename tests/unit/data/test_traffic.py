@@ -27,7 +27,7 @@ SETTINGS = load_settings().model_copy(
         "coverage_airports": COVERAGE,
         "traffic_history_months": 24,
         "traffic_min_months": 4,
-        "traffic_min_airport_share": 0.75,
+        "min_airport_share": 0.75,
     }
 )
 

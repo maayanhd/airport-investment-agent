@@ -23,7 +23,9 @@ class Settings(BaseModel):
     snapshot_dir: Path
     traffic_history_months: int = Field(ge=13)
     traffic_min_months: int = Field(ge=13)
-    traffic_min_airport_share: float = Field(gt=0, le=1)
+    delays_months: int = Field(ge=3)
+    delays_min_months: int = Field(ge=3)
+    min_airport_share: float = Field(gt=0, le=1)
 
     @field_validator("coverage_airports")
     @classmethod

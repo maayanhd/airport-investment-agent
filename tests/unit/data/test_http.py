@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from airport_agent.data.http import FetchError, HttpFetcher
+from airport_agent.data.http import FetchError, HttpFetcher, NotFoundError
 
 URL = "https://example.test/data.csv"
 
@@ -50,3 +50,20 @@ def test_rate_limit_is_retried() -> None:
     route = respx.get(URL).mock(side_effect=[httpx.Response(429), httpx.Response(200, text="ok")])
     assert make_fetcher([]).get_text(URL) == "ok"
     assert route.call_count == 2
+
+
+@respx.mock
+def test_not_found_has_its_own_error_and_is_not_retried() -> None:
+    route = respx.get(URL).respond(404)
+
+    with pytest.raises(NotFoundError):
+        make_fetcher([]).get_bytes(URL)
+
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_get_bytes_returns_the_raw_body() -> None:
+    respx.get(URL).respond(200, content=b"\x00\x01")
+
+    assert make_fetcher([]).get_bytes(URL) == b"\x00\x01"

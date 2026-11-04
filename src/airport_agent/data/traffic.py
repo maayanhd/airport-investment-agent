@@ -4,12 +4,13 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter
 
 from airport_agent.config import Settings
+from airport_agent.data.history import History, read_rows, require_enough
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider
-from airport_agent.domain import MonthlyTraffic, Provenance
+from airport_agent.domain import MonthlyTraffic
 
 BTS_URL = "https://data.bts.gov/resource/r495-tyji.json"
 SOURCE = "BTS T-100 (summary by origin airport)"
@@ -43,19 +44,6 @@ def _to_traffic(row: _Row) -> MonthlyTraffic:
     )
 
 
-def _read_rows(text: str) -> list[_Row]:
-    """Name the first bad row and field, so the fallback note says what was wrong."""
-    try:
-        return _ROWS.validate_json(text)
-    except ValidationError as error:
-        first = error.errors()[0]
-        where = ".".join(str(part) for part in first["loc"]) or "response"
-
-        problems = error.error_count()
-
-        raise ValueError(f"BTS {where}: {first['msg']} ({problems} problem(s))") from error
-
-
 def _group_by_airport(rows: list[_Row], wanted: set[str]) -> dict[str, list[MonthlyTraffic]]:
     series: dict[str, list[MonthlyTraffic]] = defaultdict(list)
 
@@ -72,47 +60,25 @@ def _group_by_airport(rows: list[_Row], wanted: set[str]) -> dict[str, list[Mont
     return dict(series)
 
 
-def _require_enough_airports(
-    series: dict[str, list[MonthlyTraffic]], wanted: set[str], min_months: int, min_share: float
-) -> None:
-    complete = sum(len(months) >= min_months for months in series.values())
-
-    if complete < min_share * len(wanted):
-        raise ValueError(
-            f"BTS response too thin: {complete} of {len(wanted)} covered airports have "
-            f"{min_months}+ months (need {min_share:.0%})"
-        )
-
-
 def parse_traffic(
     text: str, coverage: Iterable[str], *, min_months: int, min_airport_share: float
 ) -> dict[str, list[MonthlyTraffic]]:
     """Raises ValueError, and only ValueError, on unusable, truncated or too-thin content."""
     wanted = {code.upper() for code in coverage}
-    rows = _read_rows(text)
+    rows = read_rows(_ROWS, text, "BTS")
 
     if len(rows) >= MAX_ROWS:
         raise ValueError(f"BTS response reached the {MAX_ROWS} row limit and may be truncated")
 
     series = _group_by_airport(rows, wanted)
-    _require_enough_airports(series, wanted, min_months, min_airport_share)
+    require_enough(
+        series, len(wanted), min_months=min_months, min_share=min_airport_share, label="BTS"
+    )
 
     return series
 
 
-class TrafficHistory:
-    def __init__(
-        self,
-        series: dict[str, list[MonthlyTraffic]],
-        provenance: Provenance,
-        coverage: Iterable[str],
-    ) -> None:
-        self._series = series
-        self.provenance = provenance
-        self.missing_codes = sorted({c.upper() for c in coverage} - series.keys())
-
-    def series(self, iata: str) -> list[MonthlyTraffic]:
-        return self._series.get(iata.upper(), [])
+TrafficHistory = History[MonthlyTraffic]
 
 
 def _months_back(today: date, months: int) -> date:
@@ -154,7 +120,7 @@ def load_traffic(
             text,
             wanted,
             min_months=settings.traffic_min_months,
-            min_airport_share=settings.traffic_min_airport_share,
+            min_airport_share=settings.min_airport_share,
         ),
         as_of=_latest_label,
     )

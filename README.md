@@ -19,16 +19,18 @@ Out of scope: non-US airports, financial returns, forecasts we cannot support fr
 |---|---|---|
 | OurAirports `airports.csv` (public domain) | airport identity, state, location, size | implemented (`data/catalog.py`) |
 | BTS T-100 summary by origin airport (Socrata API, no key) | monthly departures, passengers, seats, load factor, average flight distance | implemented (`data/traffic.py`) |
-| BTS On-Time Reporting (bulk monthly zips) | delays and cancellations | _TBD (next PR)_ |
+| BTS On-Time Reporting (bulk monthly zips, 31 MB each) | cancellations and departure delays per airport and month | implemented (`data/delays.py`) |
 
 How data is fetched (`data/`):
 - **Live first, snapshot fallback.** Every result carries provenance: source, `live` or `snapshot`, fetch time, data month, and a note with the reason when a snapshot was used.
 - **Validate before overwriting.** Live content must parse before it replaces a snapshot, so a 200 response that is an error page or a truncated file never destroys the last good copy. Snapshots are written atomically and checked against a SHA-256 on load.
 - **Third-party data is untrusted.** Files are parsed into typed records; free text from a dataset is never passed to the model as instructions.
 - **Coverage is explicit.** Only airports listed in `coverage_airports` are used. A covered code absent from the data is reported as "not in the data", not as "not covered".
-- **A thin or cut-off response never replaces a good snapshot.** BTS data is accepted only if no query limit was reached and at least `traffic_min_airport_share` of the covered airports have `traffic_min_months` months (24, enough for last 12 vs prior 12). The BTS window is 30 months because the data lags 3 to 4 months.
+- **A thin or cut-off response never replaces a good snapshot.** BTS data is accepted only if no query limit was reached and at least `min_airport_share` of the covered airports have `traffic_min_months` months (24, enough for last 12 vs prior 12). The BTS window is 30 months because the data lags 3 to 4 months.
 - **Committed vs ignored snapshots.** The BTS snapshot is committed: it is a filtered API response (about 460 KB, only the covered airports and the columns we use), so the offline demo and CI work from a clone. The OurAirports CSV (12.7 MB, the whole world) is git-ignored and fetched on demand. Neither is a raw bulk download.
 - **Inspecting data.** `airport-agent data show ANC` is read-only. `airport-agent data refresh` fetches and saves the snapshot (it exits non-zero if live data was unusable). `airport-agent data status` lists snapshots and flags missing files or bad checksums.
+- **On-Time data is snapshot-first.** Each monthly file is 31 MB, so it is never downloaded while serving a request. `airport-agent data refresh delays` downloads the last 12 published months, sums them per airport and month (flights, cancelled, departures 15+ minutes late, delay minutes) and saves a small snapshot that the agent reads. A 404 means "not published yet" and is skipped; any other failure keeps the old snapshot.
+- **On-Time limits.** It covers only the airlines that report to BTS (large carriers), so its counts are lower than T-100 and the delay figures describe those carriers. A few covered airports have none (for example HVN and LEB), and the agent says "no delay data" for them. Delays on cancelled flights are ignored.
 
 OurAirports limits: only US airports of type large, medium or small are kept (heliports, seaplane bases and closed fields are dropped). IATA codes are not unique worldwide (a small Argentine airport also has code BOS), so the country filter is required. The file is community-maintained and has no release date, so `as_of` is empty for it.
 

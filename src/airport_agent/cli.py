@@ -5,6 +5,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
+from airport_agent.data.delays import load_delays, refresh_delays
+from airport_agent.data.history import History
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
 from airport_agent.data.snapshots import SnapshotStore
@@ -46,12 +48,25 @@ def _load(settings: Settings, store: SnapshotStore, *, persist: bool) -> Traffic
         return None
 
 
-def _refresh(settings: Settings, store: SnapshotStore) -> int:
-    history = _load(settings, store, persist=True)
+def _refresh(which: str, settings: Settings, store: SnapshotStore) -> int:
+    provider = DataProvider(store)
+    fetcher = HttpFetcher()
 
-    if history is None:
+    try:
+        history: History[object] = (
+            refresh_delays(provider, fetcher, settings)
+            if which == "delays"
+            else load_traffic(provider, fetcher, settings)
+        )
+    except DataUnavailableError as error:
+        print(error)
+
         return 1
 
+    return _report_refresh(history, settings)
+
+
+def _report_refresh(history: History[object], settings: Settings) -> int:
     source = history.provenance
 
     if source.mode is not DataMode.LIVE:
@@ -66,6 +81,38 @@ def _refresh(settings: Settings, store: SnapshotStore) -> int:
         print(f"covered but not in the data: {', '.join(history.missing_codes)}")
 
     return 0
+
+
+def _ratio(part: float, whole: float, *, scale: float = 1) -> str:
+    return f"{scale * part / whole:>6.1f}" if whole else "   n/a"
+
+
+def _print_delays(code: str, settings: Settings, store: SnapshotStore) -> None:
+    try:
+        delays = load_delays(DataProvider(store, persist=False), settings)
+    except DataUnavailableError:
+        print("delays: no snapshot yet, run `airport-agent data refresh delays`")
+
+        return
+
+    rows = delays.series(code)[-SHOWN_MONTHS:]
+
+    if not rows:
+        print(f"delays: no On-Time rows for {code} (no reporting carrier serves it)")
+
+        return
+
+    source = delays.provenance
+    print(f"delays | {source.source} | data through {rows[-1].month:%Y-%m} | {source.mode.value}")
+    print("month    flights  cancelled%  late15%  avg delay min")
+
+    for row in rows:
+        operated = row.flights - row.cancelled
+        cancelled = _ratio(row.cancelled, row.flights, scale=100)
+        late = _ratio(row.delayed_15, operated, scale=100)
+        average = _ratio(row.delay_minutes, operated)
+
+        print(f"{row.month:%Y-%m}  {row.flights:>7}  {cancelled:>10}  {late:>7}  {average:>13}")
 
 
 def _show(code: str, settings: Settings, store: SnapshotStore) -> int:
@@ -105,6 +152,8 @@ def _show(code: str, settings: Settings, store: SnapshotStore) -> int:
             f"  {row.load_factor:>5.1f}  {row.avg_flight_distance_miles:>16.0f}"
         )
 
+    _print_delays(code, settings, store)
+
     return 0
 
 
@@ -118,7 +167,8 @@ def main(
         .add_subparsers(dest="action", required=True)
     )
     commands.add_parser("status", help="list saved snapshots and check their checksums")
-    commands.add_parser("refresh", help="fetch live data and save it as the snapshot")
+    refresh = commands.add_parser("refresh", help="fetch live data and save it as the snapshot")
+    refresh.add_argument("source", nargs="?", choices=["traffic", "delays"], default="traffic")
     commands.add_parser("show", help="show recent monthly traffic (read-only)").add_argument(
         "airport"
     )
@@ -131,7 +181,7 @@ def main(
         return _status(store)
 
     if args.action == "refresh":
-        return _refresh(settings, store)
+        return _refresh(args.source, settings, store)
 
     return _show(args.airport, settings, store)
 

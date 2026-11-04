@@ -20,3 +20,16 @@ https://data.bts.gov/resource/r495-tyji.json), fetched on 2026-11-04 with the sa
 the adapter sends. It holds ANC, BOS and SNA for 2026-04 to 2026-07, 12 rows, values
 unmodified; only the whitespace is reformatted. The API returns every number as a string, and
 this fixture keeps that, so the contract test fails if BTS renames a column or changes a type.
+
+## ontime_sample.csv
+
+The header and 8 unmodified rows of the BTS On-Time Reporting file for July 2026 (public domain,
+`On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2026_7.zip` from
+https://transtats.bts.gov/PREZIP/), fetched on 2026-11-05. All 110 columns are kept.
+
+- ANC: two on-time, one late, one cancelled flight.
+- BOS: one on-time, one late and one cancelled flight; the cancelled one also has a delay value,
+  which the adapter must ignore.
+- XNA: an airport that is not covered.
+
+The tests zip it in memory. If BTS renames a column, this fixture is what should fail.
