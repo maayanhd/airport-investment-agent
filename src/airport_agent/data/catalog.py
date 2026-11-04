@@ -47,6 +47,11 @@ def parse_airports(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
 
     try:
         for row in reader:
+            # A short row has None values, a long one has extras under the key None. Either
+            # shifts the columns, so a row could be dropped or misread without any error.
+            if None in row or None in row.values():
+                raise ValueError(f"ragged row in airports.csv (line {reader.line_num})")
+
             airport = _to_airport(row, wanted)
 
             if airport is not None:
