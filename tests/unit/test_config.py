@@ -136,3 +136,16 @@ def test_strong_signal_position_must_be_inside_0_and_1(value: float) -> None:
 def test_the_year_range_must_have_a_low_below_the_high(years: tuple[int, int]) -> None:
     with pytest.raises(ValidationError, match="year_range"):
         Settings.model_validate(_changed(year_range=years))
+
+
+def test_the_request_budget_covers_every_call_timing_out_on_every_attempt() -> None:
+    settings = load_settings().model_copy(
+        update={
+            "max_tool_rounds": 4,
+            "validation_retries": 1,
+            "llm_timeout_seconds": 30.0,
+            "llm_retries": 1,
+        }
+    )
+
+    assert settings.request_budget_seconds == (4 + 1 + 1) * 30 * 2
