@@ -1,6 +1,8 @@
 # All tunable assumptions live here and are echoed to the user as "assumptions".
 long_haul_min_miles: 1500
-new_england_states: [CT, MA, ME, NH, RI, VT]
+regions:                        # names the region ranking understands; a two-letter state code also works
+  new england: [CT, MA, ME, NH, RI, VT]
+strong_signal_scaled: 0.5       # a score component at or above this position in its fixed range counts as a strong signal
 score_weights:                  # must sum to 1; every component is "higher = stronger expansion case"
   passenger_growth: 0.3         # passengers, last 12 months vs the 12 before
   load_factor: 0.3              # percent of seats filled, last 12 months

@@ -88,6 +88,12 @@ Why these choices:
 - *Partial scores aren't hidden, but they aren't ranked as equals.* A missing KPI means the remaining weights are rescaled, so that score isn't comparable with a full one. `rank` puts airports with all four components first, then partial ones, and confidence plus the missing KPI are always shown next to the number.
 - *Try it:* `airport-agent score BOS BDL SFO` prints each component with its scaled value, weight and points. It prints in the order you typed, not ranked.
 
+**Assumptions behind the four question types** (each is also stated in the answer):
+- *Region:* a region is a configured name ("New England") or a state code. A code that is also a nickname ("LA") is read as the city, not the state; Louisiana needs "state LA".
+- *Congestion comparison:* the metric is the delay rate over each airport's newest run of up to 12 consecutive months. The two airports may cover different months, so the answer flags a different length or end month. Rates that agree at the shown precision (0.01 percentage points) are called equal.
+- *Share of traffic:* only average flight distance is available, not a long-haul share. The answer says so and gives the average with the long-haul threshold from `config.yaml`.
+- *Unmet demand:* a signal is "strong" when its scaled value passes a threshold from `config.yaml`. If a signal has no data, the answer reads "3 of 4" and names the missing one.
+
 ## 6. Model choice and cost
 Smallest model that passes the eval for each step. The router and agent loop start with a Haiku-class model and escalate only if the evals show a gap. The judge is Sonnet-class and offline only. _Measured table TBD (M6)._
 

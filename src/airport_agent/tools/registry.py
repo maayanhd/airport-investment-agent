@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from airport_agent.dataset import Dataset
 from airport_agent.tools.result import ErrorKind, ToolResult
 
 MAX_ERROR_CHARS = 300
@@ -45,6 +46,21 @@ class Tool(Protocol):
     def input_model(self) -> type[BaseModel]: ...
 
     def run(self, args: Any) -> ToolResult: ...
+
+
+class ToolType(Protocol):
+    """A tool class: its definition is readable without data, and it builds a tool from data."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def description(self) -> str: ...
+
+    @property
+    def input_model(self) -> type[BaseModel]: ...
+
+    def __call__(self, data: Dataset) -> Tool: ...
 
 
 class ToolRegistry:
