@@ -61,3 +61,15 @@ def test_weights_must_name_known_components_and_not_be_negative(
         load_settings().model_validate(
             {**load_settings().model_dump(), "score_weights": weights, "score_bounds": bounds}
         )
+
+
+@pytest.mark.parametrize(
+    "aliases",
+    [{"LA": ["LAX"]}, {"la": []}, {"la": ["XYZ"]}, {"la": ["LAX", "ZZZ"]}],
+)
+def test_aliases_must_be_lowercase_and_list_covered_airports(aliases: dict[str, list[str]]) -> None:
+    data = load_settings().model_dump()
+    data["airport_aliases"] = aliases
+
+    with pytest.raises(ValueError, match="airport_aliases"):
+        Settings.model_validate(data)

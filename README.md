@@ -27,14 +27,14 @@ How data is fetched (`data/`):
 - **Third-party data is untrusted.** Files are parsed into typed records; free text from a dataset is never passed to the model as instructions.
 - **Coverage is explicit.** Only airports listed in `coverage_airports` are used. A covered code absent from the data is reported as "not in the data", not as "not covered".
 - **A thin or cut-off response never replaces a good snapshot.** BTS data is accepted only if no query limit was reached and at least `min_airport_share` of the covered airports have `traffic_min_months` months (24, enough for last 12 vs prior 12). The BTS window is 30 months because the data lags 3 to 4 months.
-- **Committed vs ignored snapshots.** The BTS snapshot is committed: it is a filtered API response (about 460 KB, only the covered airports and the columns we use), so the offline demo and CI work from a clone. The OurAirports CSV (12.7 MB, the whole world) is git-ignored and fetched on demand. Neither is a raw bulk download.
+- **All three snapshots are committed.** Each is a filtered result, not a raw download: BTS traffic (about 590 KB) and delays (about 120 KB) for the covered airports and the columns we use, and the covered US airports from OurAirports (13 KB, cut from the 12.7 MB world file). The offline demo and CI work from a clone; `airport-agent data refresh traffic|delays|catalog` renews them.
 - **Inspecting data.** `airport-agent data show ANC` is read-only. `airport-agent data refresh` fetches and saves the snapshot (it exits non-zero if live data was unusable or the snapshot could not be written). `airport-agent data status` lists snapshots and flags missing files, bad checksums and stale or unknown data months.
 - **On-Time data is snapshot-first.** Each monthly file is 31 MB, so it is never downloaded while serving a request. `airport-agent data refresh delays` downloads the last 12 published months, sums them per airport and month (flights, cancelled, departures 15+ minutes late, delay minutes) and saves a small snapshot that the agent reads. A 404 means "not published yet" and is skipped; any other failure keeps the old snapshot.
 - **On-Time limits.** It covers only the airlines that report to BTS (large carriers), so its counts are lower than T-100 and the delay figures describe those carriers. A few covered airports have none (for example HVN and LEB), and the agent says "no delay data" for them. Delays on cancelled flights are ignored.
 - **Staleness and partial data.** A snapshot older than `max_data_age_months` (6) is flagged `stale` in its provenance and the output says how old it is. Airports with fewer months than the minimum (ACK, MVY, HYA are seasonal) are listed and shown with a "do not compare years" note.
 - **Known limits of `data refresh delays`.** It downloads about 370 MB one file at a time (16 minutes on a slow server), and one missing older month aborts the run and keeps the old snapshot instead of leaving a silent gap. That is acceptable for a manual command; per-month caching or parallel downloads are the next step if refreshes become frequent.
 
-OurAirports limits: only US airports of type large, medium or small are kept (heliports, seaplane bases and closed fields are dropped). IATA codes are not unique worldwide (a small Argentine airport also has code BOS), so the country filter is required. The file is community-maintained and has no release date, so `as_of` is empty for it.
+OurAirports limits: only US airports of type large, medium or small are kept (heliports, seaplane bases and closed fields are dropped). IATA codes are not unique worldwide (a small Argentine airport also has code BOS), so the country filter is required. The file is community-maintained and has no release date, so its `as_of` is the month it was fetched. Airport names are third-party text that reaches the model, so they are cut to 80 plain characters at load.
 
 ## 3. Risk and what happens when the system is wrong
 Being wrong with confidence is worse than abstaining.
@@ -51,7 +51,13 @@ Human review does **not** sit in the chat path (it would break a conversational 
 3. **At the point of consequence:** anything exported or sent in the firm's name needs a human.
 
 ## 4. Deterministic vs LLM
-_TBD (M3/M4)_: data, KPIs, scoring and number validation are plain Python; the LLM only chooses tools, resolves follow-ups and writes the explanation from tool output.
+Data, KPIs, scoring and name resolution are plain Python. The LLM only chooses a tool, fills its arguments, resolves follow-ups and writes the explanation from tool output. It never calls an API and never produces a number.
+
+**Tools** (`tools/`): a small registry of named tools, each with a pydantic input model that gives both the JSON schema sent to the model and the validation of what comes back. A bad call returns an error result instead of raising. Every result has the same shape: `data`, `assumptions` (how a name was read, the scoring rules), `caveats` (proxies, partial, snapshot or stale data), `sources` (provenance) and a typed `error` (ambiguous airport, not covered, insufficient data) that tells the agent to ask or abstain. Numbers in `data` are rounded once, with a `shown` string to quote, so the validator can match the answer against them exactly.
+
+**Names** (`resolve.py`): a code resolves directly; a common name uses the alias table in `config.yaml` (LA means LAX, with BUR, LGB, ONT and SNA offered); an official name resolves when exactly one covered airport matches; a name shared by several airports ("Portland") is returned as a question, never guessed.
+
+**Run a tool without the LLM:** `airport-agent tool airport_score '{"airport": "LA"}'` prints exactly what the model would see.
 
 ## 5. Scoring methodology
 All of it is plain Python (`kpis.py`, `scoring.py`); the LLM never computes or changes a number.
@@ -99,7 +105,7 @@ Tradeoffs made so far (simpler option chosen, to be revisited when a milestone n
 ## 9. Limitations and failure cases
 _TBD_: foreign-language questions, stale or missing data, small airports, weak proxies, small eval set.
 
-Known so far: the airport catalog has no publication date (see data sources above); when live data is unavailable the answer comes from the last snapshot and must say so; the OurAirports fixture in `tests/fixtures/` is a real excerpt (dated in its README), so it proves the parser handles the real format as of that date; CI does not detect later upstream changes unless the fixture is refreshed.
+Known so far: the airport catalog has no publication date, only a fetch month (see data sources above); when live data is unavailable the answer comes from the last snapshot and must say so; the OurAirports fixture in `tests/fixtures/` is a real excerpt (dated in its README), so it proves the parser handles the real format as of that date; CI does not detect later upstream changes unless the fixture is refreshed.
 
 ## 10. At scale, monitoring and drift
 _TBD_

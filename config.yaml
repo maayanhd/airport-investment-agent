@@ -19,6 +19,21 @@ traffic_min_months: 24          # last 12 vs prior 12 needs 24 months per airpor
 delays_months: 12               # On-Time months requested (31 MB each, so only `data refresh delays` downloads)
 delays_min_months: 9            # months an airport needs; BTS skips airports with no reporting carrier
 min_airport_share: 0.9  # share of coverage that must have enough months, else keep the snapshot
+airport_aliases:                # common names; the first code is the default reading, the rest are offered
+  la: [LAX, BUR, LGB, ONT, SNA]
+  los angeles: [LAX, BUR, LGB, ONT, SNA]
+  orange county: [SNA]
+  santa ana: [SNA]
+  new york: [JFK, LGA, EWR]
+  nyc: [JFK, LGA, EWR]
+  san francisco: [SFO, OAK, SJC]
+  bay area: [SFO, OAK, SJC]
+  washington: [DCA, IAD, BWI]
+  dc: [DCA, IAD, BWI]
+  chicago: [ORD, MDW]
+  boston: [BOS, MHT]            # Manchester-Boston Regional also has Boston in its name
+  houston: [IAH, HOU]
+  dallas: [DFW, DAL]
 router_model: claude-haiku-5-5
 judge_model: claude-sonnet-5-5
 coverage_airports: [ATL, LAX, ORD, DFW, DEN, JFK, SFO, SEA, LAS, MCO, EWR, CLT, PHX, IAH, MIA, BOS, MSP, FLL, DTW, PHL, LGA, BWI, SLC, SAN, IAD, DCA, TPA, BNA, AUS, MDW, HNL, DAL, PDX, STL, RDU, HOU, SMF, MSY, SJC, OAK, SNA, SAT, MCI, CLE, IND, PIT, CMH, CVG, OGG, MKE, JAX, RSW, ONT, BUR, LGB, ABQ, OMA, BUF, ANC, FAI, JNU, BET, OTZ, KTN, SIT, CDV, ADQ, OME, PSP, TUS, RNO, BOI, TUL, OKC, MEM, SDF, RIC, ORF, CHS, SAV, GRR, ALB, ROC, SYR, PVD, MHT, PWM, BGR, BTV, ORH, BDL, HVN, HYA, ACK, MVY, PSM, LEB]

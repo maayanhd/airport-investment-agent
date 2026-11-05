@@ -23,6 +23,7 @@ class Settings(BaseModel):
     router_model: str
     judge_model: str
     coverage_airports: list[str]
+    airport_aliases: dict[str, list[str]]
     snapshot_dir: Path
     max_data_age_months: int = Field(ge=1)
     traffic_history_months: int = Field(ge=13)
@@ -45,6 +46,14 @@ class Settings(BaseModel):
 
         if self.delays_months < self.delays_min_months:
             raise ValueError("delays_months must be at least delays_min_months")
+
+        return self
+
+    @model_validator(mode="after")
+    def _aliases_point_at_covered_airports(self) -> Self:
+        for alias, codes in self.airport_aliases.items():
+            if alias != alias.lower() or not codes or set(codes) - set(self.coverage_airports):
+                raise ValueError(f"airport_aliases[{alias!r}] must list covered airport codes")
 
         return self
 

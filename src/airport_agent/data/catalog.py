@@ -2,19 +2,30 @@
 
 import csv
 import io
+import re
 from collections.abc import Iterable
+from datetime import date
 
+from pydantic import TypeAdapter
+
+from airport_agent.data.history import read_rows
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider
 from airport_agent.domain import Airport, Provenance
 
 OURAIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 SOURCE = "OurAirports"
-SNAPSHOT_NAME = "ourairports_airports.csv"
+SNAPSHOT_NAME = "ourairports_airports.json"
+MAX_NAME_CHARS = 80
 SIZES = {"large_airport": "large", "medium_airport": "medium", "small_airport": "small"}
 REQUIRED_COLUMNS = frozenset(
     {"iata_code", "iso_country", "type", "iso_region", "name", "latitude_deg", "longitude_deg"}
 )
+
+
+def _clean_name(name: str) -> str:
+    """Names come from a third party and reach the model, so keep only plain characters."""
+    return " ".join(re.sub(r"[^\w\s.,'&()/-]", "", name).split())[:MAX_NAME_CHARS]
 
 
 def _to_airport(row: dict[str, str], wanted: set[str]) -> Airport | None:
@@ -25,7 +36,7 @@ def _to_airport(row: dict[str, str], wanted: set[str]) -> Airport | None:
 
     return Airport(
         iata=iata,
-        name=row["name"],
+        name=_clean_name(row["name"]),
         state=row["iso_region"].removeprefix("US-"),
         latitude=float(row["latitude_deg"]),
         longitude=float(row["longitude_deg"]),
@@ -73,6 +84,9 @@ class OurAirportsCatalog:
     def get(self, iata: str) -> Airport | None:
         return self._airports.get(iata.upper())
 
+    def all(self) -> list[Airport]:
+        return sorted(self._airports.values(), key=lambda a: a.iata)
+
     def in_states(self, states: Iterable[str]) -> list[Airport]:
         wanted = {state.upper() for state in states}
         return sorted(
@@ -80,15 +94,49 @@ class OurAirportsCatalog:
         )
 
 
-def load_catalog(
-    provider: DataProvider, fetcher: HttpFetcher, coverage: Iterable[str]
+_AIRPORTS = TypeAdapter(list[Airport])
+
+
+def _to_json(airports: dict[str, Airport]) -> str:
+    return _AIRPORTS.dump_json(sorted(airports.values(), key=lambda a: a.iata)).decode()
+
+
+def parse_catalog(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
+    """Raises ValueError, and only ValueError, on unusable content."""
+    wanted = {code.upper() for code in coverage}
+    airports = {a.iata: a for a in read_rows(_AIRPORTS, text, "OurAirports") if a.iata in wanted}
+
+    if not airports:
+        raise ValueError("no covered airport found in the catalog")
+
+    return airports
+
+
+def refresh_catalog(
+    provider: DataProvider,
+    fetcher: HttpFetcher,
+    coverage: Iterable[str],
+    *,
+    today: date | None = None,
 ) -> OurAirportsCatalog:
+    """Downloads the 12.7 MB world file and keeps only the covered airports as the snapshot."""
     wanted = tuple(coverage)
+    month = f"{today or date.today():%Y-%m}"  # the file has no data month, so use the fetch month
     fetched = provider.fetch(
         SNAPSHOT_NAME,
         source=SOURCE,
-        live=lambda: fetcher.get_text(OURAIRPORTS_URL),
-        parse=lambda text: parse_airports(text, wanted),
+        live=lambda: _to_json(parse_airports(fetcher.get_text(OURAIRPORTS_URL), wanted)),
+        parse=lambda text: parse_catalog(text, wanted),
+        as_of=lambda _: month,
+    )
+
+    return OurAirportsCatalog(fetched.value, fetched.provenance, wanted)
+
+
+def load_catalog(provider: DataProvider, coverage: Iterable[str]) -> OurAirportsCatalog:
+    wanted = tuple(coverage)
+    fetched = provider.read_snapshot(
+        SNAPSHOT_NAME, source=SOURCE, parse=lambda text: parse_catalog(text, wanted)
     )
 
     return OurAirportsCatalog(fetched.value, fetched.provenance, wanted)

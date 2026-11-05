@@ -1,6 +1,6 @@
 # Design
 
-> Status: KPIs, config and the scoring function (with a `score` CLI command) are done; tools, the LLM layer and the validator are not. Parts marked _TBD_ are filled in as milestones land. The README holds the longer reasoning log.
+> Status: KPIs, scoring, the tool registry and the first tool (`airport_score`) are done; the other tools, the LLM layer and the validator are not. Parts marked _TBD_ are filled in as milestones land. The README holds the longer reasoning log.
 
 ## 1. Scoring methodology
 
