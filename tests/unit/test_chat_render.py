@@ -55,11 +55,11 @@ def test_a_reply_without_a_session_keeps_the_page_on_its_current_one() -> None:
 
 
 def test_a_good_reply_carries_the_text_notes_label_and_session() -> None:
-    reply = reply_from_response(200, json.dumps({**BODY, "status": "abstained"}))
+    reply = reply_from_response(200, json.dumps({**BODY, "status": "data_only"}))
 
     assert reply.text == "BOS scores 62.2."
     assert reply.session_id == "a" * 32
-    assert "No answer shown" in reply.label
+    assert "could not be verified" in reply.label
     assert "**Data sources**" in reply.notes
     assert not reply.reset_session
 
