@@ -6,6 +6,17 @@
 
 **Principle.** Every number and every rank comes from pure functions over public data. The LLM can explain a score, but it never produces one.
 
+**Explicit assumptions.** These assumptions define what the product does and does not claim:
+- Expansion desirability is an operational-pressure proxy, not an estimate of financial return, construction feasibility, available land, gate capacity, airline interest, passenger willingness to pay, or a forecast of future demand.
+- Growth is compared across rolling, consecutive trailing windows. The latest available month is allowed only when each source has enough complete history; missing or seasonal months are not filled in.
+- Passenger growth and capacity gap are based on BTS T-100 counts. They describe reported scheduled/charter passenger activity and seats in the covered data set, not actual demand that was refused or unavailable.
+- Load factor and delay pressure are treated as airport-level indicators, but BTS coverage, carrier reporting and route mix differ by airport. The score does not normalise for airline mix, airport type, weather, seasonality, runway constraints, terminal ownership, geography or time zone.
+- Higher delay pressure means stronger capacity pressure only for this exercise. It is not treated as proof that expansion solves a delay problem or that investment would improve service.
+- Congestion, unmet demand and expansion potential are labels for the configured proxies. They are not measurements of demand, capacity, congestion or investment value.
+- Fixed score weights and bounds are modelling choices made from the current covered-airport snapshot. They must be reviewed when coverage, source methodology, BTS revisions or the 2026-11 peer population change; score stability is assumed across airports and questions, not across time.
+- Regional ranking means that every covered airport in the named state or region is eligible. A score is not a recommendation, and lower confidence or missing components can affect comparability even if a score is shown.
+- Public-source availability, revisions and publication lag are outside the product's control. Live and snapshot values are kept separate in answers so users can see which evidence supported a result.
+
 **Inputs (`kpis.py`).** Four KPIs per airport, from BTS T-100 (traffic) and BTS On-Time (delays):
 
 | KPI | Definition | Window |
@@ -58,6 +69,23 @@ Without delay data, confidence would be 80%, the other three weights would be di
 - **Human review stays out of the chat path.** Automatic gates sit in the request path, feedback is reviewed asynchronously, and a person signs off at export.
 - **A small Python eval harness** instead of a framework such as Promptfoo. The key checks (numeric gold values, routing confusion matrix, validator catch rate) are deterministic and fit plain code, and a Node tool would add a second toolchain.
 
+### Production-grade gaps
+
+This is a safe demo architecture, not a production service. The following work is still required before this product is exposed to real analysts or consequential decisions:
+
+- **Identity and access:** add authenticated users, roles, authorization, API key rotation, tenant isolation if applicable, CSRF protection for browser flows and audit trails for exported or shared answers.
+- **Secrets and configuration:** validate startup configuration; use a managed secret store; define environment-specific budgets and allowed data providers; prevent secrets and prompts from entering logs or telemetry.
+- **Deployment and reliability:** run multiple stateless workers, put the in-memory session store behind an external store with TTL and replication, add health/readiness checks, graceful shutdown, request deadlines, timeouts, retries with bounded backoff and circuit breakers for model/data providers.
+- **Scalability:** bound concurrency and memory, rate-limit abuse and expensive model calls, set per-request and per-tenant quotas, and load-test the API, model provider and snapshot startup path.
+- **Data operations:** establish an owned refresh schedule with publication calendars and alerting; version snapshots and provenance; detect source schema changes and revisions; support rollback, retention and backups; quarantine or repair bad data without silently replacing prior evidence.
+- **Data quality and model governance:** run larger sampled ground-truth checks, document methodology review and approval, monitor score-bound drift, data freshness and source coverage, and add a tested change process for weights, thresholds, prompts and model versions.
+- **Security:** add content security headers, strict CORS, request-size limits, dependency vulnerability scanning, prompt-injection regression tests, output safety checks, protected downloads, malware/rate controls at the edge and periodic threat review of provider data, tools and LLM-generated HTML/text.
+- **Validation and deterministic safety:** broaden validation beyond current heuristic patterns with sentence-level provenance and adversarial coverage; support reference citations; make abstention and fallback behavior measurable; and keep a human sign-off for investment or export decisions.
+- **Observability and operations:** add structured logs, request IDs, model/tool latency and error metrics, token/cost telemetry, redaction, dashboards, alarms and runbooks. Avoid logging full questions, answers or user identifiers without an explicit retention and privacy policy.
+- **Privacy and compliance:** publish retention/deletion policies, classify stored data, protect session history, support regional residency, execute vendor terms/data-processing reviews and assess accessibility and regulatory requirements for the intended audience.
+- **Resilience testing and release:** add chaos/failure injection, restore drills, canary releases and rollback; run the full unit/contract/integration/e2e suite and model evals in CI for every release.
+- **Client and availability:** move from localhost-only serving to a hardened web deployment; add reconnect/error states, session recovery, accessible chat controls, provider status, maintenance mode and a documented support/incident process.
+
 ## 3. Where and how AI is used
 
 - **The LLM does:** choose which tool to call and fill in its arguments, resolve follow-ups ("and BOS?") using conversation state, and write the explanation from tool output.
@@ -73,5 +101,5 @@ Without delay data, confidence would be 80%, the other three weights would be di
 
   Airport names from datasets are cleaned to plain characters, but that can't stop ordinary words that read like an instruction. So tool output is passed to the model as data under a system instruction not to follow it, and the validator is the backstop. Matching is exact on the rounded values the tools return (a fraction may be quoted as a percent). Dates, years after a preposition, ordinals and plain counts up to 10 are exempt.
 - **Serving:** the model sits behind a small interface and only `anthropic_client.py` knows the vendor format. A reply cut off at the token limit is an error, never a shown answer. Conversations are held in memory, one agent each, and the API has no login, so it is for one analyst on localhost (README section 8).
-- **Models** (`config.yaml`): a Haiku-class router, escalated only if evals show a gap, and a Sonnet-class judge used offline only. _Measured results TBD (README section 6)._
+- **Models** (`config.yaml`): a Haiku-class router, escalated only if evals show a gap, and a Sonnet-class judge used offline only. First measured run: about $0.33 per full eval (agent $0.04, judge $0.29); thresholds not yet met (README section 6).
 - **Build-time AI:** Claude Code with an eval agent and code-review skills. Details are in the README.

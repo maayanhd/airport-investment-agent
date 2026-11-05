@@ -14,19 +14,22 @@ from airport_agent.llm import LlmClient, LlmError, Message, ToolCall, ToolOutput
 from airport_agent.prompts import (
     ABSTAIN_TEXT,
     DATA_ONLY_TEXT,
+    OUT_OF_SCOPE_TEXT,
     SYSTEM_PROMPT,
     UNAVAILABLE_TEXT,
     entities_note,
     rejection_feedback,
 )
+from airport_agent.scope import out_of_scope_topic
 from airport_agent.tools import build_registry
 from airport_agent.tools.registry import ToolRegistry
-from airport_agent.tools.result import ToolResult
+from airport_agent.tools.result import ErrorKind, ToolResult
 from airport_agent.validator import Rules, Violation, ViolationKind, validate_answer
 
 logger = logging.getLogger(__name__)
 EMPTY_ANSWER = "(empty answer)"
 TOO_MANY_ROUNDS = "too many tool rounds"
+RANK_TOOL = "rank_region"
 
 
 @dataclass
@@ -74,6 +77,17 @@ class Agent:
         self._turns: deque[Turn] = deque(maxlen=settings.history_turns)
 
     def ask(self, question: str) -> Answer:
+        off_topic = out_of_scope_topic(
+            question, self._settings.out_of_scope_terms, self._settings.in_scope_terms
+        )
+
+        if off_topic:
+            logger.warning("out of scope: %s", off_topic)
+
+            return Answer(
+                Status.ABSTAINED, OUT_OF_SCOPE_TEXT, problems=(f"out of scope: {off_topic}",)
+            )
+
         turn = Turn.start(question, self._system())
 
         try:
@@ -149,12 +163,25 @@ class Agent:
         outputs = []
 
         for call in calls:
-            result = self._registry.call(call.name, call.arguments)
+            result = self._second_region(call, turn) or self._registry.call(
+                call.name, call.arguments
+            )
             turn.results.append(result)
             turn.evidence = None
             outputs.append(ToolOutput(call.id, result.model_dump_json(exclude={"sources"})))
 
         return Message("user", tool_outputs=tuple(outputs))
+
+    def _second_region(self, call: ToolCall, turn: Turn) -> ToolResult | None:
+        """One ranking per question: splitting an unlisted group of states is a guess, so ask."""
+        if call.name != RANK_TOOL or not any(r.tool == RANK_TOOL and r.ok for r in turn.results):
+            return None
+
+        message = "one region per question; ask the user which single region or state they mean"
+
+        return ToolResult.failure(
+            RANK_TOOL, ErrorKind.BAD_ARGUMENTS, message, sorted(self._settings.regions)
+        )
 
     def _check(self, text: str, turn: Turn, question: str) -> list[Violation]:
         if not text.strip():

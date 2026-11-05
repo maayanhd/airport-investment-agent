@@ -1,0 +1,8 @@
+# Hand-labelled answers for judge calibration (`python -m evals.run --calibrate`).
+# Add `judge_min_labels` items like this one, scored 1 to 5 by you on the criteria in rubric.md:
+#
+# - question: "How strong is BOS for expansion?"
+#   answer: "BOS scores 62.2 ..."          # the text the user saw
+#   data: "{...tool result JSON...}"       # what the answer rests on
+#   human: {scores: {answers_question: 5, no_invented_info: 5, tone: 4, states_assumptions: 3}}
+[]

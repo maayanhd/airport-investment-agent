@@ -11,7 +11,7 @@ from typing import Any, Self
 import anthropic
 
 from airport_agent.config import Settings
-from airport_agent.llm import LlmError, Message, ToolCall
+from airport_agent.llm import LlmError, Message, ToolCall, Usage
 
 EMPTY_REPLY = "(empty reply)"  # the API rejects an assistant message with no content
 
@@ -72,9 +72,16 @@ class AnthropicClient:
         self._send = send
         self._model = model
         self._max_tokens = max_tokens
+        self.usage = Usage()
 
     @classmethod
-    def from_settings(cls, settings: Settings, environ: Mapping[str, str] = os.environ) -> Self:
+    def from_settings(
+        cls,
+        settings: Settings,
+        environ: Mapping[str, str] = os.environ,
+        *,
+        model: str | None = None,
+    ) -> Self:
         key = environ.get("ANTHROPIC_API_KEY")
 
         if not key:
@@ -85,7 +92,9 @@ class AnthropicClient:
         )
 
         return cls(
-            sdk.messages.create, model=settings.router_model, max_tokens=settings.llm_max_tokens
+            sdk.messages.create,
+            model=model or settings.router_model,
+            max_tokens=settings.llm_max_tokens,
         )
 
     def complete(
@@ -96,16 +105,21 @@ class AnthropicClient:
         tools: list[dict[str, Any]],
         allow_tools: bool,
     ) -> Message:
+        request: dict[str, Any] = {
+            "model": self._model,
+            "max_tokens": self._max_tokens,
+            "system": system,
+            "messages": to_api_messages(messages),
+        }
+
+        if tools:  # the API rejects tool_choice without tools
+            request |= {"tools": tools, "tool_choice": {"type": "auto" if allow_tools else "none"}}
+
         try:
-            reply = self._send(
-                model=self._model,
-                max_tokens=self._max_tokens,
-                system=system,
-                messages=to_api_messages(messages),
-                tools=tools,
-                tool_choice={"type": "auto" if allow_tools else "none"},
-            )
+            reply = self._send(**request)
         except anthropic.APIError as error:
             raise LlmError(f"the model call failed ({type(error).__name__})") from error
+
+        self.usage.add(reply)
 
         return from_api_reply(reply)
