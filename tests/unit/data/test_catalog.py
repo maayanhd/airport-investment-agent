@@ -176,7 +176,8 @@ def test_a_thin_catalog_refresh_does_not_replace_a_good_snapshot(tmp_path: Path)
 def test_names_are_cleaned_on_every_path_and_never_empty() -> None:
     fields = {"iata": "BOS", "state": "MA", "latitude": 1.0, "longitude": 1.0, "size": "large"}
 
-    assert Airport(name="Boston <b>Logan</b> {{x}}", **fields).name == "Boston bLogan/b x"
+    cleaned = Airport(name="Boston <b>Logan</b> {{x}}", city="Bos<i>ton", **fields)
+    assert (cleaned.name, cleaned.city) == ("Boston bLogan/b x", "Bositon")
 
     with pytest.raises(ValueError, match="empty"):
-        Airport(name="<>{}[]", **fields)
+        Airport(name="<>{}[]", city="Boston", **fields)

@@ -41,22 +41,26 @@ class Airport(BaseModel):
 
     iata: str = Field(pattern=f"^{IATA_PATTERN}$")
     name: str
+    city: str  # where the airport is, as OurAirports lists it; may differ from the name
     state: str = Field(pattern=f"^{STATE_PATTERN}$")
     latitude: float
     longitude: float
     size: Literal["large", "medium", "small"]
 
+    @field_validator("name", "city")
+    @classmethod
+    def _plain_text(cls, text: str) -> str:
+        """Drop markup-like characters and cap the length. Words survive, so this does not stop
+        text that reads like an instruction; tool output is treated as data, never as orders."""
+        return " ".join(re.sub(r"[^\w\s.,'&()/-]", "", text).split())[:MAX_NAME_CHARS]
+
     @field_validator("name")
     @classmethod
-    def _plain_name(cls, name: str) -> str:
-        """Drop markup-like characters and cap the length. Words survive, so this does not stop
-        a name that reads like an instruction; tool output is treated as data, never as orders."""
-        cleaned = " ".join(re.sub(r"[^\w\s.,'&()/-]", "", name).split())[:MAX_NAME_CHARS]
-
-        if not cleaned:
+    def _name_not_empty(cls, name: str) -> str:
+        if not name:
             raise ValueError("airport name is empty after cleaning")
 
-        return cleaned
+        return name
 
 
 class MonthlyTraffic(BaseModel):

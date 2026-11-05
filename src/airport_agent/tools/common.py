@@ -30,6 +30,7 @@ def resolve(data: Dataset, tool: str, query: str) -> Resolved | ToolResult:
         data.catalog,
         data.settings.airport_aliases,
         max_candidates=data.settings.max_name_candidates,
+        volume=data.passenger_volume(),
     )
 
     if found.status is Match.RESOLVED and found.code:

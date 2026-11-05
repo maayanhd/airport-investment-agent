@@ -8,6 +8,7 @@ def make(**overrides: object) -> Airport:
     base: dict[str, object] = {
         "iata": "BOS",
         "name": "Logan",
+        "city": "Boston",
         "state": "MA",
         "latitude": 42.36,
         "longitude": -71.0,

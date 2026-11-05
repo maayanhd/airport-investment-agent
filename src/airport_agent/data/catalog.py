@@ -17,7 +17,16 @@ SOURCE = "OurAirports"
 SNAPSHOT_NAME = "ourairports_airports.json"
 SIZES = {"large_airport": "large", "medium_airport": "medium", "small_airport": "small"}
 REQUIRED_COLUMNS = frozenset(
-    {"iata_code", "iso_country", "type", "iso_region", "name", "latitude_deg", "longitude_deg"}
+    {
+        "iata_code",
+        "iso_country",
+        "type",
+        "iso_region",
+        "name",
+        "municipality",
+        "latitude_deg",
+        "longitude_deg",
+    }
 )
 
 
@@ -30,6 +39,7 @@ def _to_airport(row: dict[str, str], wanted: set[str]) -> Airport | None:
     return Airport(
         iata=iata,
         name=row["name"],
+        city=row["municipality"],
         state=row["iso_region"].removeprefix("US-"),
         latitude=float(row["latitude_deg"]),
         longitude=float(row["longitude_deg"]),
