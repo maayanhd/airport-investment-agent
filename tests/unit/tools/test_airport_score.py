@@ -1,13 +1,19 @@
 import dataclasses
+from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from airport_agent.dataset import Dataset
+from airport_agent.config import Settings
+from airport_agent.data.http import HttpFetcher
+from airport_agent.data.snapshots import SnapshotStore
+from airport_agent.dataset import Dataset, load_dataset
 from airport_agent.display import FORMATS, LABELS
 from airport_agent.domain import DataMode
 from airport_agent.scoring import COMPONENTS
 from airport_agent.tools import build_registry
+from airport_agent.tools.airport_score import _why_missing
 from airport_agent.tools.result import ErrorKind, ToolResult
 
 
@@ -121,3 +127,49 @@ def test_caveats_name_only_the_source_that_fell_back_to_a_snapshot(dataset: Data
     assert len(caveats) == 2
     assert "T-100" in caveats[1]
     assert "snapshot used" in caveats[1]
+
+
+def test_a_partial_score_says_what_is_missing_and_why(dataset: Dataset) -> None:
+    result = _call(dataset, "ACK")  # seasonal: too few consecutive months of delay data
+
+    assert result.ok
+    assert result.data["missing"] == ["delay_pressure"]
+    partial = next(line for line in result.caveats if line.startswith("Built from"))
+    assert "80% of the score weight" in partial
+    assert "fewer than 9 consecutive months of delay data" in partial
+    assert "Not comparable" in partial
+
+
+def test_a_full_score_has_no_partial_caveat(dataset: Dataset) -> None:
+    result = _call(dataset, "BOS")
+
+    assert not any(line.startswith("Built from") for line in result.caveats)
+
+
+def test_an_airport_no_reporting_carrier_serves_says_so(dataset: Dataset) -> None:
+    result = _call(dataset, "HVN")
+
+    partial = next(line for line in result.caveats if line.startswith("Built from"))
+    assert "no reporting carrier serves it" in partial
+
+
+def test_old_snapshots_are_flagged_stale_in_the_caveats(
+    settings: Settings, repo: Path, offline_fetcher: HttpFetcher
+) -> None:
+    store = SnapshotStore(repo / settings.snapshot_dir)
+    late = load_dataset(settings, store, offline_fetcher, today=date(2027, 6, 1))
+
+    caveats = _call(late, "BOS").caveats
+
+    assert any("stale: data month 2026-08 is 10 months old" in line for line in caveats)
+    assert any("stale: data month 2026-07 is 11 months old" in line for line in caveats)
+
+
+def test_without_delay_data_every_airport_says_so(dataset: Dataset) -> None:
+    result = _call(dataclasses.replace(dataset, delays=None), "BOS")
+
+    assert any("delay data is unavailable" in line for line in result.caveats)
+
+
+def test_a_missing_traffic_component_is_explained_too(dataset: Dataset) -> None:
+    assert "needs consecutive months of traffic" in _why_missing("load_factor", "BOS", dataset)

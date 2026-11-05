@@ -389,15 +389,11 @@ def _tool(*argv: str, capsys: Out) -> tuple[int, str]:
     return status, capsys.readouterr().out
 
 
-@respx.mock
-def test_tool_without_a_name_lists_the_tools(capsys: Out, monkeypatch: pytest.MonkeyPatch) -> None:
-    respx.get(BTS_URL).respond(503)
-    _offline(monkeypatch)
-
-    status, out = _tool(capsys=capsys)
+def test_tool_without_a_name_lists_the_tools_without_any_data(tmp_path: Path, capsys: Out) -> None:
+    status = main(["tool"], root=tmp_path, settings=load_settings())  # no snapshots here
 
     assert status == 0
-    assert out.startswith("airport_score: Expansion score")
+    assert capsys.readouterr().out.startswith("airport_score: Expansion score")
 
 
 @respx.mock
@@ -446,7 +442,7 @@ def test_tool_rejects_arguments_that_are_not_json(
 
 
 def test_tool_reports_missing_data_instead_of_crashing(tmp_path: Path, capsys: Out) -> None:
-    assert main(["tool"], root=tmp_path, settings=load_settings()) == 1
+    assert main(["tool", "airport_score"], root=tmp_path, settings=load_settings()) == 1
     assert "no valid snapshot" in capsys.readouterr().out
 
 

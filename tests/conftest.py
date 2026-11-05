@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,7 @@ from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.dataset import Dataset, load_dataset
 
 REPO = Path(__file__).parents[1]
+TODAY = date(2026, 11, 5)  # pinned, so staleness does not change what the tests see
 
 
 def _offline_fetcher() -> HttpFetcher:
@@ -28,7 +30,7 @@ def dataset(settings: Settings) -> Dataset:
     """The real committed snapshots, read-only: what the agent serves from."""
     store = SnapshotStore(REPO / settings.snapshot_dir)
 
-    return load_dataset(settings, store, _offline_fetcher())
+    return load_dataset(settings, store, _offline_fetcher(), today=TODAY)
 
 
 @pytest.fixture

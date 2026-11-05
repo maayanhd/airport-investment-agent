@@ -31,6 +31,35 @@ def _components(result: AirportScore) -> list[dict[str, object]]:
     ]
 
 
+def _why_missing(name: str, code: str, data: Dataset) -> str:
+    if name != "delay_pressure":
+        return f"{name} needs consecutive months of traffic data"
+
+    if data.delays is None:
+        return "delay data is unavailable"
+
+    months = len(data.delays.series(code))
+
+    if months == 0:
+        return "no On-Time rows, no reporting carrier serves it"
+
+    return (
+        f"fewer than {data.delays.min_months} consecutive months of delay data ({months} in total)"
+    )
+
+
+def _partial_caveat(result: AirportScore, code: str, data: Dataset) -> list[str]:
+    if not result.missing:
+        return []
+
+    reasons = "; ".join(_why_missing(name, code, data) for name in result.missing)
+
+    return [
+        f"Built from {result.confidence:.0%} of the score weight ({reasons}). "
+        "Not comparable with scores that have every component."
+    ]
+
+
 class AirportScoreTool:
     name = "airport_score"
     description = (
@@ -92,7 +121,11 @@ class AirportScoreTool:
             ok=failure is None,
             data=data,
             assumptions=[*resolved.assumptions, *describe_scoring(settings)],
-            caveats=[PROXY_CAVEAT, *data_caveats(self._data)],
+            caveats=[
+                PROXY_CAVEAT,
+                *_partial_caveat(result, resolved.code, self._data),
+                *data_caveats(self._data),
+            ],
             sources=self._data.sources(),
             error=failure,
         )

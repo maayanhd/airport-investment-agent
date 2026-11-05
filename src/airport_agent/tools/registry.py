@@ -25,6 +25,15 @@ def _summary(error: ValidationError) -> str:
     return f"invalid arguments - {shown or items[0][:MAX_ERROR_CHARS]}"
 
 
+def definition(name: str, description: str, input_model: type[BaseModel]) -> dict[str, Any]:
+    """One tool in the shape the Anthropic API expects."""
+    return {
+        "name": name,
+        "description": description,
+        "input_schema": input_model.model_json_schema(),
+    }
+
+
 class Tool(Protocol):
     @property
     def name(self) -> str: ...
@@ -48,11 +57,7 @@ class ToolRegistry:
     def definitions(self) -> list[dict[str, Any]]:
         """The tool list in the shape the Anthropic API expects."""
         return [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_model.model_json_schema(),
-            }
+            definition(tool.name, tool.description, tool.input_model)
             for tool in self._tools.values()
         ]
 

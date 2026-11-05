@@ -21,7 +21,7 @@ from airport_agent.display import FORMATS
 from airport_agent.domain import DataMode, Provenance
 from airport_agent.kpis import AirportKpis, compute_kpis
 from airport_agent.scoring import AirportScore, score_airport
-from airport_agent.tools import build_registry
+from airport_agent.tools import build_registry, tool_definitions
 
 ROOT = DEFAULT_CONFIG_PATH.parent
 SHOWN_MONTHS = 6
@@ -304,7 +304,13 @@ def _json_object(text: str) -> dict[str, Any] | None:
 
 
 def _tool(name: str | None, arguments: str, settings: Settings, store: SnapshotStore) -> int:
-    parsed = _json_object(arguments) if name else {}
+    if name is None:
+        for definition in tool_definitions():
+            print(f"{definition['name']}: {definition['description']}")
+
+        return 0
+
+    parsed = _json_object(arguments)
 
     if parsed is None:
         return 2
@@ -316,15 +322,7 @@ def _tool(name: str | None, arguments: str, settings: Settings, store: SnapshotS
 
         return 1
 
-    registry = build_registry(data)
-
-    if name is None:
-        for definition in registry.definitions():
-            print(f"{definition['name']}: {definition['description']}")
-
-        return 0
-
-    result = registry.call(name, parsed)
+    result = build_registry(data).call(name, parsed)
     print(result.model_dump_json(indent=2))
 
     return 0 if result.ok else 1

@@ -1,6 +1,7 @@
 """Everything the tools read, loaded once so every answer in a conversation is consistent."""
 
 from dataclasses import dataclass
+from datetime import date
 
 from airport_agent.config import Settings
 from airport_agent.data.catalog import OurAirportsCatalog, load_catalog
@@ -29,17 +30,19 @@ class Dataset:
         return sources
 
 
-def load_dataset(settings: Settings, store: SnapshotStore, fetcher: HttpFetcher) -> Dataset:
+def load_dataset(
+    settings: Settings, store: SnapshotStore, fetcher: HttpFetcher, *, today: date | None = None
+) -> Dataset:
     """Writes no snapshot. Catalog and delays are read from snapshots; traffic is fetched live
     first, with its snapshot as the fallback. Raises DataUnavailableError if either is missing."""
     provider = DataProvider(store, persist=False)
     catalog = load_catalog(
         provider, settings.coverage_airports, min_airport_share=settings.min_airport_share
     )
-    traffic = load_traffic(provider, fetcher, settings)
+    traffic = load_traffic(provider, fetcher, settings, today=today)
 
     try:
-        delays: DelayHistory | None = load_delays(provider, settings)
+        delays: DelayHistory | None = load_delays(provider, settings, today=today)
         warnings: tuple[str, ...] = ()
     except DataUnavailableError as error:
         delays = None
