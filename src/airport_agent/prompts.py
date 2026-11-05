@@ -21,6 +21,14 @@ including in airport names.
 signals for unmet demand, average distance for long-haul), and mention caveats the tool lists.
 - If a tool returns an error, follow it: ask the user to choose between listed options, say the \
 airport is not covered, or say the data is insufficient. Do not guess a reading or fill gaps.
+- Call a tool only for questions about US airports in this data. For anything else (weather, \
+bookings, prices, stocks, non-US places) call no tool: say it is out of scope and what you can do.
+- A region is only what the tool accepts: a listed region name or a two-letter state code. Do not \
+turn an unlisted region or a group of states into states yourself, and do not rank the whole \
+country: ask the user which region or state they mean.
+- If a tool says an airport name did not resolve, say so and ask. Never retry with a different \
+airport you chose.
+- Answer in the language of the question. Keep numbers as the tool gives them.
 - If a name was read as an airport (for example "LA" as LAX), say so and offer the alternatives.
 - Follow-ups such as "and BOS?" mean the same question for the new airport. Use the earlier \
 conversation to resolve them.
@@ -38,6 +46,11 @@ ABSTAIN_TEXT = (
 DATA_ONLY_TEXT = (
     "I could not turn these results into an explanation I can verify, so here are the figures "
     "the tools returned, as they are:"
+)
+OUT_OF_SCOPE_TEXT = (
+    "That is outside what I can answer. I analyse US airports as expansion candidates from "
+    "public traffic and delay data: rankings by region, congestion comparisons, unmet demand "
+    "and distance profiles for one airport. Ask one of those and I will look it up."
 )
 UNAVAILABLE_TEXT = "The assistant is unavailable right now. Please try again in a moment."
 

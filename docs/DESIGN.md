@@ -48,10 +48,28 @@ A KPI is `None` when the data cannot support it (too few months, or a gap). Noth
 - **Human review stays out of the chat path.** Automatic gates run in the request path; feedback is reviewed asynchronously.
 - **A small Python eval harness** instead of a framework: the key checks (gold figures, routing confusion, validator catch rate) are deterministic.
 
+### Production-grade gaps
+
+This is a safe demo architecture, not a production service. The following work is still required before this product is exposed to real analysts or consequential decisions:
+
+- **Identity and access:** add authenticated users, roles, authorization, API key rotation, tenant isolation if applicable, CSRF protection for browser flows and audit trails for exported or shared answers.
+- **Secrets and configuration:** validate startup configuration; use a managed secret store; define environment-specific budgets and allowed data providers; prevent secrets and prompts from entering logs or telemetry.
+- **Deployment and reliability:** run multiple stateless workers, put the in-memory session store behind an external store with TTL and replication, add health/readiness checks, graceful shutdown, request deadlines, timeouts, retries with bounded backoff and circuit breakers for model/data providers.
+- **Scalability:** bound concurrency and memory, rate-limit abuse and expensive model calls, set per-request and per-tenant quotas, and load-test the API, model provider and snapshot startup path.
+- **Data operations:** establish an owned refresh schedule with publication calendars and alerting; version snapshots and provenance; detect source schema changes and revisions; support rollback, retention and backups; quarantine or repair bad data without silently replacing prior evidence.
+- **Data quality and model governance:** run larger sampled ground-truth checks, document methodology review and approval, monitor score-bound drift, data freshness and source coverage, and add a tested change process for weights, thresholds, prompts and model versions.
+- **Security:** add content security headers, strict CORS, request-size limits, dependency vulnerability scanning, prompt-injection regression tests, output safety checks, protected downloads, malware/rate controls at the edge and periodic threat review of provider data, tools and LLM-generated HTML/text.
+- **Validation and deterministic safety:** broaden validation beyond current heuristic patterns with sentence-level provenance and adversarial coverage; support reference citations; make abstention and fallback behavior measurable; and keep a human sign-off for investment or export decisions.
+- **Observability and operations:** add structured logs, request IDs, model/tool latency and error metrics, token/cost telemetry, redaction, dashboards, alarms and runbooks. Avoid logging full questions, answers or user identifiers without an explicit retention and privacy policy.
+- **Privacy and compliance:** publish retention/deletion policies, classify stored data, protect session history, support regional residency, execute vendor terms/data-processing reviews and assess accessibility and regulatory requirements for the intended audience.
+- **Resilience testing and release:** add chaos/failure injection, restore drills, canary releases and rollback; run the full unit/contract/integration/e2e suite and model evals in CI for every release.
+- **Client and availability:** move from localhost-only serving to a hardened web deployment; add reconnect/error states, session recovery, accessible chat controls, provider status, maintenance mode and a documented support/incident process.
+
 ## 3. Where and how AI is used
 
 - **The LLM does:** choose which tool to call and with what arguments, resolve follow-ups ("and BOS?") from conversation state, and write the explanation from tool output.
 - **The LLM never does:** produce a number or a rank, or call an API. Only tools call APIs.
+- **Scope gate.** `scope.py` refuses clearly off-topic questions (weather, bookings, stocks) in code before any model call; a mixed question still reaches the model.
 - **Guardrail.** A deterministic validator (`validator.py`, `evidence.py`, `claims.py`) checks every draft before it is shown and allows one rewrite. It blocks a figure or airport that no tool result or the question contains, a flipped direction ("fell" for a rise), a number that belongs to another airport, and a rank or "A is more delayed than B" claim that contradicts the tool. If the retry fails and tools did return data, the user gets those figures as plain text; with no usable data, the agent abstains. Known limits (claims in wording the patterns miss, a figure two airports share by chance) are in README section 9.
 - **Untrusted data.** Airport names are cleaned to plain characters and tool output is passed to the model as data, with the validator as the backstop.
 - **Models** (`config.yaml`): a Haiku-class model runs the loop, escalated only if the evals show a gap; a Sonnet-class judge grades prose offline only. Measured cost and results are in README sections 6 and 7.

@@ -67,6 +67,8 @@ All tunable values live in `config.yaml`, with a comment there. This table says 
 | `history_turns` | 6 | Earlier turns kept so "and BOS?" can be resolved. |
 | `remembered_airports` | 8 | Airports named in the follow-up hint about the last turn. |
 | `fallback_max_lines` | 40 | Lines of raw tool figures shown when no wording could be verified. |
+| `out_of_scope_terms` | weather, book, stocks, cost... | Scope gate (`scope.py`): a question with one of these words and none of `in_scope_terms` is refused in code, before any model call. |
+| `in_scope_terms` | expansion, delay, rank, airport... | Any of these keeps the question for the model, so a mixed ask such as "does weather explain the delays at SEA?" is not blocked. |
 | `llm_max_tokens` | 2048 | Longest model reply; a longer one is treated as cut off and never shown. |
 | `llm_timeout_seconds`, `llm_retries` | 30, 1 | Per model call. Together with `max_tool_rounds` they set the page's wait time. |
 | `session_ttl_minutes`, `max_sessions` | 60, 200 | An idle conversation is forgotten after the first; past the second, the least recently used goes. |

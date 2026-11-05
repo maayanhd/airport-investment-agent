@@ -40,6 +40,8 @@ class Settings(BaseModel):
     history_turns: int = Field(ge=1)
     validation_retries: int = Field(ge=0)
     year_range: tuple[int, int]
+    out_of_scope_terms: list[str]
+    in_scope_terms: list[str]
     router_model: str
     judge_model: str
     coverage_airports: list[str]

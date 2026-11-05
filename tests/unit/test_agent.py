@@ -179,7 +179,7 @@ def test_a_model_failure_is_reported_and_the_conversation_is_unchanged(dataset: 
 def test_an_unknown_tool_comes_back_as_an_error_the_model_can_read(dataset: Dataset) -> None:
     llm = ScriptedLlm(_call("book_flight"), _say("I can only score airports."))
 
-    answer = _agent(dataset, llm).ask("Book me a flight")
+    answer = _agent(dataset, llm).ask("What can you do for airports?")
     output = llm.calls[1]["messages"][-1].tool_outputs[0]
 
     assert answer.status is Status.ANSWERED
@@ -463,3 +463,27 @@ def test_notes_come_from_the_results_the_reply_was_checked_against(dataset: Data
     answer = agent.ask("Say the SFO score again.")
 
     assert any("congestion proxy" in c for c in answer.notes.caveats)
+
+
+def test_an_off_topic_question_never_reaches_the_model(dataset: Dataset) -> None:
+    llm = ScriptedLlm()
+
+    answer = _agent(dataset, llm).ask("What is the weather in Boston tomorrow?")
+
+    assert answer.status is Status.ABSTAINED
+    assert answer.problems == ("out of scope: weather",)
+    assert llm.calls == []
+
+
+def test_a_second_region_ranking_in_one_turn_is_refused(dataset: Dataset) -> None:
+    llm = ScriptedLlm(
+        _call("rank_region", region="ME"),
+        _call("rank_region", region="VT"),
+        _say("Which single region or state do you mean?"),
+    )
+
+    answer = _agent(dataset, llm).ask("Which Maine and Vermont airports are strongest?")
+    refusal = llm.calls[2]["messages"][-1].tool_outputs[0].content
+
+    assert [r.ok for r in answer.results] == [True, False]
+    assert "one region per question" in refusal
