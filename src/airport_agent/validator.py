@@ -41,6 +41,7 @@ CODE = re.compile(r"\b[A-Z]{3}\b")
 class ViolationKind(StrEnum):
     NUMBER = "number"
     AIRPORT = "airport"
+    EMPTY = "empty"
 
 
 @dataclass(frozen=True)

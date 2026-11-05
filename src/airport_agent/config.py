@@ -22,6 +22,9 @@ class Settings(BaseModel):
     score_bounds: dict[str, tuple[float, float]]
     min_confidence: float = Field(ge=0, le=1)
     max_plain_count: int = Field(ge=0)
+    max_tool_rounds: int = Field(ge=1)
+    history_turns: int = Field(ge=1)
+    validation_retries: int = Field(ge=0)
     year_range: tuple[int, int]
     router_model: str
     judge_model: str
