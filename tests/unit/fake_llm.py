@@ -12,9 +12,21 @@ class ScriptedLlm:
         self.calls: list[dict[str, Any]] = []
 
     def complete(
-        self, *, system: str, messages: Sequence[Message], tools: list[dict[str, Any]]
+        self,
+        *,
+        system: str,
+        messages: Sequence[Message],
+        tools: list[dict[str, Any]],
+        allow_tools: bool,
     ) -> Message:
-        self.calls.append({"system": system, "messages": list(messages), "tools": tools})
+        self.calls.append(
+            {
+                "system": system,
+                "messages": list(messages),
+                "tools": tools,
+                "allow_tools": allow_tools,
+            }
+        )
         step = self._script.pop(0)
 
         if isinstance(step, Exception):

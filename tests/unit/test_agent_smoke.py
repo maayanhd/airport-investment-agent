@@ -4,7 +4,7 @@ from typing import Any
 
 from fake_llm import ScriptedLlm, call, say
 
-from airport_agent.agent import Agent
+from airport_agent.agent import build_agent
 from airport_agent.answer import Answer, Status
 from airport_agent.dataset import Dataset
 from airport_agent.tools import build_registry
@@ -15,7 +15,7 @@ def _run(dataset: Dataset, tool: str, question: str, wording: Any, **arguments: 
     """The model calls `tool`, then writes `wording(result)`, built only from that result."""
     result = build_registry(dataset).call(tool, arguments)
     llm = ScriptedLlm(call(tool, **arguments), say(wording(result)))
-    agent = Agent(llm, build_registry(dataset), dataset.settings)
+    agent = build_agent(llm, dataset)
 
     return agent.ask(question)
 
@@ -104,7 +104,7 @@ def test_a_follow_up_for_another_airport_works_end_to_end(dataset: Dataset) -> N
         call("unmet_demand", airport="BOS"),
         say(_unmet(bos)),
     )
-    agent = Agent(llm, registry, dataset.settings)
+    agent = build_agent(llm, dataset)
 
     agent.ask("Why is there unmet demand at SFO?")
     answer = agent.ask("and what about BOS?")
