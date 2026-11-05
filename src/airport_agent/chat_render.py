@@ -5,10 +5,7 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-<<<<<<< HEAD
 from airport_agent.answer import Status
-=======
->>>>>>> main
 from airport_agent.chat_models import ChatResponse, NotesOut
 
 OK = 200
@@ -16,7 +13,6 @@ NOT_FOUND = 404
 TOO_LARGE = 413
 UNPROCESSABLE = 422
 UNREACHABLE = 0  # no HTTP reply at all
-<<<<<<< HEAD
 NO_ANSWER = {Status.ABSTAINED.value, Status.UNAVAILABLE.value}  # the text says it; no extras
 STATUS_LABELS = {
     Status.ANSWERED.value: "",
@@ -25,15 +21,6 @@ STATUS_LABELS = {
     ),
     Status.ABSTAINED.value: "No answer shown: it could not be verified against the data.",
     Status.UNAVAILABLE.value: "The assistant could not be reached.",
-=======
-STATUS_LABELS = {
-    "answered": "",
-    "data_only": (
-        "Figures only: the written answer could not be verified, so these are the tools' values."
-    ),
-    "abstained": "No answer shown: it could not be verified against the data.",
-    "unavailable": "The assistant could not be reached.",
->>>>>>> main
 }
 GENERIC_ERROR = "Something went wrong on the server. Please try again."
 
@@ -87,19 +74,12 @@ def _answer(body_text: str) -> Reply:
     except ValidationError:
         return Reply(GENERIC_ERROR)
 
-<<<<<<< HEAD
     has_answer = body.status not in NO_ANSWER
 
     return Reply(
         text=escape_markdown(body.text),
         label=status_label(body.status) if has_answer else "",
         notes=notes_markdown(body.notes) if has_answer else "",
-=======
-    return Reply(
-        text=escape_markdown(body.text),
-        label=status_label(body.status),
-        notes=notes_markdown(body.notes),
->>>>>>> main
         session_id=body.session_id,
     )
 

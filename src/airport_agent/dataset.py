@@ -34,7 +34,10 @@ class Dataset:
     @cached_property
     def passenger_volume(self) -> Mapping[str, int]:
         """Passengers per airport (0 when unknown); only used to pick a default airport."""
-        return {code: self.passengers_12m(code) or 0 for code in self.settings.coverage_airports}
+        return {
+            code: sum(m.passengers for m in self.traffic.series(code)[-YEAR_MONTHS:])
+            for code in self.settings.coverage_airports
+        }
 
     def city_codes(self) -> dict[str, frozenset[str]]:
         """Covered cities as lower-case words, with their airports, to catch a city named alone."""
