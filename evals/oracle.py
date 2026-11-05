@@ -12,6 +12,8 @@ from airport_agent.tools.result import ToolResult
 from evals.cases import Case, Turn
 
 DECLINE = "That is outside what I can answer from US airport traffic and delay data."
+# ToolResult.data is untyped JSON by design. The oracle indexes it directly, so a renamed tool field
+# fails loudly here instead of producing a quietly different answer.
 Renderer = Callable[[dict[str, Any]], list[str]]
 
 

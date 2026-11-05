@@ -33,7 +33,16 @@ REPO = Path(__file__).resolve().parents[1]
 LEDGER_PATH = Path(__file__).parent / "ledger.jsonl"
 DEFAULT_PROMPT = "default"
 NOT_RUN = "judge rubric, judge calibration, model-cost table, live mode"
-CLIENTS: dict[str, Callable[[Sequence[Case]], LlmClient]] = {"oracle": Oracle}
+MODE = "recorded"
+
+
+@dataclass(frozen=True)
+class ClientSpec:
+    make: Callable[[Sequence[Case]], LlmClient]
+    is_model_backed: bool  # False means it ignores the system prompt, so prompts cannot be compared
+
+
+CLIENTS: dict[str, ClientSpec] = {"oracle": ClientSpec(Oracle, is_model_backed=False)}
 
 
 class CountingClient:
@@ -61,10 +70,13 @@ class CountingClient:
 @dataclass(frozen=True)
 class Run:
     client: str
+    is_model_backed: bool
     prompt: str
     prompt_hash: str
+    sha: str
     summary: Summary
     thresholds: dict[str, float]
+    turns_by_category: dict[str, int]
 
 
 def offline_dataset(settings: Settings) -> Dataset:
@@ -97,33 +109,36 @@ def failed_metrics(run: Run) -> list[str]:
     return [name for name, minimum in run.thresholds.items() if run.summary.scores[name] < minimum]
 
 
-def git_sha() -> str:
+def _git(*args: str) -> str | None:
     try:
-        done = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        done = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=False)
     except OSError:
+        return None
+
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def git_sha() -> str:
+    """The commit, with `-dirty` when the tracked files differ from it, so a row is reproducible."""
+    sha = _git("rev-parse", "--short", "HEAD")
+
+    if sha is None:
         return "unknown"
 
-    return done.stdout.strip() or "unknown"
+    return f"{sha}-dirty" if _git("status", "--porcelain", "--untracked-files=no") else sha
 
 
-def format_report(run: Run, settings: Settings, mode: str) -> str:
-    scores = run.summary.scores
+def format_report(run: Run, settings: Settings) -> str:
     lines = [
-        f"EVAL RUN  {date.today()}  sha {git_sha()}  models: router={settings.router_model} "
-        f"judge={settings.judge_model}  mode: {mode}  client: {run.client}  prompt: {run.prompt}",
+        f"EVAL RUN  {date.today()}  sha {run.sha}  models: router={settings.router_model} "
+        f"judge={settings.judge_model}  mode: {MODE}  client: {run.client}  prompt: {run.prompt}",
         "Stages evaluated: data, scoring, routing, answers (deterministic checks)",
         f"Stages TBD (not run): {NOT_RUN}",
         "",
         "| Metric | Score | Threshold | Pass |",
     ]
 
-    for name, score in scores.items():
+    for name, score in run.summary.scores.items():
         minimum = run.thresholds.get(name)
         verdict = "-" if minimum is None else ("yes" if score >= minimum else "NO")
         lines.append(
@@ -137,19 +152,18 @@ def format_report(run: Run, settings: Settings, mode: str) -> str:
     return "\n".join(lines)
 
 
-def ledger_row(
-    run: Run, settings: Settings, mode: str, turns_by_category: dict[str, int]
-) -> dict[str, object]:
+def ledger_row(run: Run, settings: Settings) -> dict[str, object]:
     return {
         "date": str(date.today()),
-        "sha": git_sha(),
-        "mode": mode,
+        "sha": run.sha,
+        "mode": MODE,
         "client": run.client,
+        "model_backed": run.is_model_backed,  # False: scores say nothing about a model or prompt
         "prompt": run.prompt,
         "prompt_hash": run.prompt_hash,
         "models": {"router": settings.router_model, "judge": settings.judge_model},
         "turns": run.summary.turns,
-        "turns_by_category": turns_by_category,
+        "turns_by_category": run.turns_by_category,
         "model_calls": run.summary.model_calls,
         "seconds": round(run.summary.seconds, 2),
         "scores": {name: round(score, 4) for name, score in run.summary.scores.items()},
@@ -182,35 +196,45 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--prompt", type=Path, help="a system prompt file to try instead of the default"
     )
     parser.add_argument("--no-ledger", action="store_true", help="print the report, record nothing")
+    args = parser.parse_args(argv)
 
-    return parser.parse_args(argv)
+    if args.prompt and not CLIENTS[args.client].is_model_backed:
+        parser.error(f"the {args.client} client ignores the system prompt; use a model-backed one")
+
+    return args
+
+
+def build_run(args: argparse.Namespace, settings: Settings) -> Run:
+    """Reads the commit first: a run that appends to the ledger makes the tree dirty."""
+    sha = git_sha()
+    cases = load_cases()
+    prompt, name = read_prompt(args.prompt)
+    data = offline_dataset(settings)
+    spec = CLIENTS[args.client]
+    outcomes = run_cases(cases, spec.make(cases), data, prompt)
+    summary = summarize(outcomes, build_registry(data), settings.max_plain_count)
+
+    return Run(
+        args.client,
+        spec.is_model_backed,
+        name,
+        hashlib.sha256(prompt.encode()).hexdigest()[:8],
+        sha,
+        summary,
+        settings.eval_thresholds,
+        by_category(outcomes),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     settings = load_settings()
-    cases = load_cases()
-    prompt, name = read_prompt(args.prompt)
-    data = offline_dataset(settings)
-    outcomes = run_cases(cases, CLIENTS[args.client](cases), data, prompt)
-    summary = summarize(outcomes, build_registry(data))
-    run = Run(
-        args.client,
-        name,
-        hashlib.sha256(prompt.encode()).hexdigest()[:8],
-        summary,
-        settings.eval_thresholds,
-    )
+    run = build_run(args, settings)
 
-    print(format_report(run, settings, "recorded"))
+    print(format_report(run, settings))
 
     if not args.no_ledger:
-        row = append_ledger(
-            LEDGER_PATH,
-            ledger_row(
-                run, settings, "recorded", {k.value: v for k, v in by_category(outcomes).items()}
-            ),
-        )
+        row = append_ledger(LEDGER_PATH, ledger_row(run, settings))
         print(f"Ledger: appended row {row} to {LEDGER_PATH.relative_to(REPO)}")
 
     return 1 if failed_metrics(run) else 0

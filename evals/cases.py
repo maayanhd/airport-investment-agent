@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 QUESTIONS_PATH = Path(__file__).parent / "questions.yaml"
 
@@ -34,19 +34,26 @@ class Disclosure(StrEnum):
     NOT_A_SHARE = "not_a_share"
 
 
-class ExpectedCall(BaseModel):
+class _Strict(BaseModel):
+    """A misspelled key in questions.yaml is an error, not a check that quietly stops running."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ExpectedCall(_Strict):
     tool: str
     args: dict[str, Any]  # JSON arguments, validated by the tool itself
 
 
-class Turn(BaseModel):
+class Turn(_Strict):
     question: str
     expect: Expect = Expect.ANSWER
     calls: list[ExpectedCall] = Field(default_factory=list)
     must_state: list[Disclosure] = Field(default_factory=list)
+    notes: str = ""
 
 
-class Case(BaseModel):
+class Case(_Strict):
     id: str
     category: Category
     turns: list[Turn] = Field(min_length=1)
@@ -58,6 +65,9 @@ class Case(BaseModel):
         """A case with a `question` key is one turn written inline."""
         if not isinstance(raw, dict) or "question" not in raw:
             return raw
+
+        if "turns" in raw:
+            raise ValueError("a case has either `question` or `turns`, not both")
 
         turn_keys = ("question", "expect", "calls", "must_state")
         turn = {key: raw[key] for key in turn_keys if key in raw}
