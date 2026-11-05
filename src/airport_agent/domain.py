@@ -5,11 +5,12 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 IATA_PATTERN = r"[A-Z]{3}"
 STATE_PATTERN = r"[A-Z]{2}"
 MAX_NAME_CHARS = 80
+DASHES = dict.fromkeys(range(0x2010, 0x2016), "-")  # hyphen, en dash, em dash and friends
 
 
 def search_words(text: str) -> list[str]:
@@ -41,22 +42,28 @@ class Airport(BaseModel):
 
     iata: str = Field(pattern=f"^{IATA_PATTERN}$")
     name: str
+    city: str  # where the airport is, as OurAirports lists it; may differ from the name
     state: str = Field(pattern=f"^{STATE_PATTERN}$")
     latitude: float
     longitude: float
     size: Literal["large", "medium", "small"]
 
-    @field_validator("name")
+    @field_validator("name", "city")
     @classmethod
-    def _plain_name(cls, name: str) -> str:
-        """Drop markup-like characters and cap the length. Words survive, so this does not stop
-        a name that reads like an instruction; tool output is treated as data, never as orders."""
-        cleaned = " ".join(re.sub(r"[^\w\s.,'&()/-]", "", name).split())[:MAX_NAME_CHARS]
+    def _plain_text(cls, text: str) -> str:
+        """Turn markup-like characters into spaces and cap the length. Words survive, so this does
+        not stop text that reads like an instruction; tool output is data, never orders."""
+        plain = re.sub(r"[^\w\s.,'&()/-]", " ", text.translate(DASHES))
 
-        if not cleaned:
-            raise ValueError("airport name is empty after cleaning")
+        return " ".join(plain.split())[:MAX_NAME_CHARS]
 
-        return cleaned
+    @field_validator("name", "city")
+    @classmethod
+    def _not_empty(cls, text: str, info: ValidationInfo) -> str:
+        if not text:
+            raise ValueError(f"airport {info.field_name} is empty after cleaning")
+
+        return text
 
 
 class MonthlyTraffic(BaseModel):

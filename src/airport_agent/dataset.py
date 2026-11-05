@@ -21,6 +21,13 @@ class Dataset:
     delays: DelayHistory | None  # None when no delay snapshot exists
     warnings: tuple[str, ...] = ()
 
+    def passenger_volume(self) -> dict[str, int]:
+        """Passengers in each airport's newest 12 months; only used to pick a default airport."""
+        return {
+            code: sum(m.passengers for m in self.traffic.series(code)[-12:])
+            for code in self.settings.coverage_airports
+        }
+
     def sources(self) -> list[Provenance]:
         sources = [self.catalog.provenance, self.traffic.provenance]
 

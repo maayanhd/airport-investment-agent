@@ -176,7 +176,29 @@ def test_a_thin_catalog_refresh_does_not_replace_a_good_snapshot(tmp_path: Path)
 def test_names_are_cleaned_on_every_path_and_never_empty() -> None:
     fields = {"iata": "BOS", "state": "MA", "latitude": 1.0, "longitude": 1.0, "size": "large"}
 
-    assert Airport(name="Boston <b>Logan</b> {{x}}", **fields).name == "Boston bLogan/b x"
+    cleaned = Airport(name="Boston <b>Logan</b> {{x}}", city="Bos<i>ton", **fields)
+    assert (cleaned.name, cleaned.city) == ("Boston b Logan /b x", "Bos i ton")
 
-    with pytest.raises(ValueError, match="empty"):
-        Airport(name="<>{}[]", **fields)
+    with pytest.raises(ValueError, match="name is empty"):
+        Airport(name="<>{}[]", city="Boston", **fields)
+
+    with pytest.raises(ValueError, match="city is empty"):
+        Airport(name="Logan", city="  ", **fields)
+
+
+def test_dashes_are_kept_so_words_do_not_fuse() -> None:
+    fields = {"iata": "SEA", "state": "WA", "latitude": 1.0, "longitude": 1.0, "size": "large"}
+    airport = Airport(name="Seattle\u2013Tacoma International Airport", city="Seattle", **fields)
+
+    assert airport.name == "Seattle-Tacoma International Airport"
+
+
+def test_the_city_comes_from_the_municipality_column() -> None:
+    airports = parse_airports(SAMPLE, ["ANC", "BOS", "BDL"])
+
+    assert [airports[c].city for c in ("ANC", "BOS", "BDL")] == ["Anchorage", "Boston", "Hartford"]
+
+
+def test_a_file_without_the_city_column_is_refused() -> None:
+    with pytest.raises(ValueError, match="required columns"):
+        parse_airports(SAMPLE.replace('"municipality"', '"town"'), ["ANC"])

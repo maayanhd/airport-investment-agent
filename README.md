@@ -56,7 +56,14 @@ Data, KPIs, scoring and name resolution are plain Python. The LLM picks a tool, 
 
 **Tools** (`tools/`): a small registry of named tools. Each has a pydantic input model that gives both the JSON schema sent to the model and the validation of what comes back. A bad call returns an error result instead of raising. Every result has the same shape: `data`, `assumptions` (how a name was read, the scoring rules), `caveats` (proxies, partial, fallback or stale data), `sources` (provenance) and a typed `error` (ambiguous airport, not covered, insufficient data) that tells the agent to ask or abstain. Numbers in `data` are rounded once, with a `shown` string to quote, so the validator can match an answer against them exactly.
 
-**Names** (`resolve.py`): a code resolves directly. A common name uses the alias table in `config.yaml` (LA means LAX, with BUR, LGB, ONT and SNA offered as alternatives). An official name resolves when exactly one covered airport matches. A name shared by several airports ("Portland") comes back as a question, never a guess.
+**Names** (`resolve.py`), tried in this order:
+1. *Metro names and nicknames* the data cannot know ("LA", "NYC", "DC", "Bay Area") come from a short alias table in `config.yaml`. The first code is the default reading (LA means LAX) and the rest are offered.
+2. *An airport code* resolves directly.
+3. *A city* resolves from the OurAirports city column, so "Santa Ana" or "Chicago" need no entry. If a city has several covered airports, the one with the most passengers over the last 12 months is the default and the others are offered ("Chicago" reads as ORD, MDW offered). The default comes from the traffic data, not from a hand-picked list.
+4. *A word from an official name* resolves if exactly one airport matches. Several matches come back as a question; more than a few ask for a clearer name.
+5. *The same city name in two states* ("Portland": PDX or PWM) is never guessed; it comes back as a question.
+
+Every assumed reading is stated in the answer. A test checks that each covered airport can be reached by its own city name, so a coverage change cannot silently break lookup.
 
 **Run a tool without the LLM:** `airport-agent tool airport_score '{"airport": "LA"}'` prints exactly what the model would see.
 

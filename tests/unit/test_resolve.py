@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -7,12 +9,13 @@ from airport_agent.dataset import Dataset
 from airport_agent.resolve import Match, Resolution, resolve_airport
 
 
-def _resolve(dataset: Dataset, query: str) -> Resolution:
+def _resolve(dataset: Dataset, query: str, volume: Mapping[str, int] | None = None) -> Resolution:
     return resolve_airport(
         query,
         dataset.catalog,
         dataset.settings.airport_aliases,
         max_candidates=dataset.settings.max_name_candidates,
+        volume=dataset.passenger_volume() if volume is None else volume,
     )
 
 
@@ -33,34 +36,66 @@ def test_la_is_read_as_lax_and_the_other_readings_are_offered(dataset: Dataset) 
 
 
 @pytest.mark.parametrize(
-    ("query", "code"),
+    ("query", "code", "others"),
     [
-        ("Santa Ana", "SNA"),
-        ("orange county", "SNA"),
-        ("Los Angeles", "LAX"),
-        ("new york", "JFK"),
-        ("Boston", "BOS"),
+        ("new york", "JFK", ("LGA", "EWR")),
+        ("DC", "DCA", ("IAD", "BWI")),
+        ("bay area", "SFO", ("OAK", "SJC")),
+        ("Dallas", "DFW", ("DAL",)),
+        ("orange county", "SNA", ()),
     ],
 )
-def test_common_names_resolve_through_the_alias_table(
-    dataset: Dataset, query: str, code: str
-) -> None:
-    assert _resolve(dataset, query).code == code
-
-
-@pytest.mark.parametrize(
-    ("query", "code"), [("anchorage", "ANC"), ("Boston Logan", "BOS"), ("Manchester", "MHT")]
-)
-def test_an_official_name_resolves_when_it_is_unique(
-    dataset: Dataset, query: str, code: str
+def test_metro_names_come_from_the_alias_table(
+    dataset: Dataset, query: str, code: str, others: tuple[str, ...]
 ) -> None:
     found = _resolve(dataset, query)
 
-    assert (found.status, found.code) == (Match.RESOLVED, code)
-    assert found.alternatives == ()
+    assert (found.code, found.alternatives) == (code, others)
 
 
-def test_a_name_shared_by_two_airports_asks_instead_of_guessing(dataset: Dataset) -> None:
+@pytest.mark.parametrize(
+    ("query", "code"),
+    [
+        ("Santa Ana", "SNA"),
+        ("burbank", "BUR"),
+        ("Anchorage", "ANC"),
+        ("Manchester", "MHT"),
+        ("Providence", "PVD"),
+        ("Boston Logan", "BOS"),
+    ],
+)
+def test_a_city_or_name_in_the_data_needs_no_alias(dataset: Dataset, query: str, code: str) -> None:
+    found = _resolve(dataset, query)
+
+    assert (found.status, found.code, found.alternatives) == (Match.RESOLVED, code, ())
+    assert query not in dataset.settings.airport_aliases
+
+
+@pytest.mark.parametrize(
+    ("query", "code", "other"), [("Chicago", "ORD", "MDW"), ("Houston", "IAH", "HOU")]
+)
+def test_the_busiest_airport_is_the_default_inside_one_city(
+    dataset: Dataset, query: str, code: str, other: str
+) -> None:
+    found = _resolve(dataset, query, volume={code: 100, other: 10})
+
+    assert (found.status, found.code, found.alternatives) == (Match.RESOLVED, code, (other,))
+    assert f"other readings: {other}" in found.note
+
+
+def test_the_default_follows_the_passenger_numbers_not_a_hand_picked_list(
+    dataset: Dataset,
+) -> None:
+    found = _resolve(dataset, "Chicago", volume={"MDW": 90, "ORD": 10})
+
+    assert (found.code, found.alternatives) == ("MDW", ("ORD",))
+
+
+def test_equal_volumes_fall_back_to_the_code_order(dataset: Dataset) -> None:
+    assert _resolve(dataset, "Chicago", volume={}).code == "MDW"
+
+
+def test_the_same_city_name_in_two_states_asks_instead_of_guessing(dataset: Dataset) -> None:
     found = _resolve(dataset, "Portland")
 
     assert found.status is Match.AMBIGUOUS
@@ -89,6 +124,13 @@ def test_every_configured_alias_resolves_to_its_first_code(
         assert (found.code, found.alternatives) == (codes[0], tuple(codes[1:]))
 
 
+def test_every_covered_airport_can_be_reached_by_its_own_city(dataset: Dataset) -> None:
+    for airport in dataset.catalog.all():
+        found = _resolve(dataset, airport.city)
+
+        assert airport.iata in {found.code, *found.alternatives}, (airport.iata, airport.city)
+
+
 @given(st.text())
 def test_any_text_gives_a_resolution_and_never_an_error(dataset: Dataset, query: str) -> None:
     found = _resolve(dataset, query)
@@ -107,3 +149,19 @@ def test_a_vague_name_asks_for_something_clearer(dataset: Dataset, query: str) -
 @pytest.mark.parametrize("query", ["L.A.", "l a", "Los-Angeles", "N.Y.C."])
 def test_punctuation_and_spacing_do_not_hide_an_alias(dataset: Dataset, query: str) -> None:
     assert _resolve(dataset, query).status is Match.RESOLVED
+
+
+def test_a_name_hit_in_another_city_is_offered_as_an_alternative(dataset: Dataset) -> None:
+    found = _resolve(dataset, "Boston")
+
+    assert (found.status, found.code, found.alternatives) == (Match.RESOLVED, "BOS", ("MHT",))
+
+
+def test_city_words_must_come_in_order(dataset: Dataset) -> None:
+    found = _resolve(dataset, "york new")
+
+    assert found.status is not Match.RESOLVED
+
+
+def test_a_word_from_the_name_after_a_dash_finds_the_airport(dataset: Dataset) -> None:
+    assert _resolve(dataset, "Tacoma").code == "SEA"
