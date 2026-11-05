@@ -35,12 +35,18 @@ airport_aliases:                # metro areas and nicknames the airport data can
   washington: [DCA, IAD, BWI]
   dc: [DCA, IAD, BWI]
   dallas: [DFW, DAL]
-router_model: claude-haiku-5-5
+router_model: claude-haiku-5-5  # the agent loop's model: picks the tools and writes the answer
 judge_model: claude-sonnet-5-5
 coverage_airports: [ATL, LAX, ORD, DFW, DEN, JFK, SFO, SEA, LAS, MCO, EWR, CLT, PHX, IAH, MIA, BOS, MSP, FLL, DTW, PHL, LGA, BWI, SLC, SAN, IAD, DCA, TPA, BNA, AUS, MDW, HNL, DAL, PDX, STL, RDU, HOU, SMF, MSY, SJC, OAK, SNA, SAT, MCI, CLE, IND, PIT, CMH, CVG, OGG, MKE, JAX, RSW, ONT, BUR, LGB, ABQ, OMA, BUF, ANC, FAI, JNU, BET, OTZ, KTN, SIT, CDV, ADQ, OME, PSP, TUS, RNO, BOI, TUL, OKC, MEM, SDF, RIC, ORF, CHS, SAV, GRR, ALB, ROC, SYR, PVD, MHT, PWM, BGR, BTV, ORH, BDL, HVN, HYA, ACK, MVY, PSM, LEB]
 max_tool_rounds: 4              # agent loop: model turns that call tools before it must answer
 remembered_airports: 8         # airports named in the follow-up hint about the last turn
 fallback_max_lines: 40          # lines of raw tool figures shown when the wording cannot be verified
+llm_max_tokens: 1024            # a reply longer than this is treated as cut off, never shown
+llm_timeout_seconds: 30         # per model call
+llm_retries: 1                  # the SDK retries rate limits and server errors this many times
+session_ttl_minutes: 60         # an idle conversation is forgotten after this
+max_sessions: 200               # past this the least recently used conversation is dropped
+max_message_chars: 2000         # longest question the API accepts
 history_turns: 6                # earlier turns kept so follow-ups like "and BOS?" can be resolved
 validation_retries: 1           # rejected drafts the model may rewrite before the agent abstains
 eval_thresholds:                # evals/run.py: a metric below its threshold fails the run

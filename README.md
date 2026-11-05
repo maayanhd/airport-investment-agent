@@ -2,7 +2,7 @@
 
 A chat agent that helps analysts find US airports where modernization is likely to pay off, judged by passenger and flight-capacity pressure. It's a one-day exercise, so this README is the decision log: written before the code and updated as things get built.
 
-> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, the tool layer (registry plus five tools), the answer validator, the agent loop and the offline eval harness are done. The live LLM client, the judge and the cost table are not. Sections marked _TBD_ get filled in as each milestone lands.
+> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, the tool layer (registry plus five tools), the answer validator, the agent loop, the offline eval harness, the real model client, the HTTP API and the chat page are done. The model-backed evals, the judge and the cost table are not (they need a key and a paid run). Sections marked _TBD_ get filled in as each milestone lands.
 
 ## 1. Scope
 In scope: US airports, public aviation data, and questions about congestion, long-haul share, capacity pressure and expansion candidates, with follow-ups ("and what about BOS?").
@@ -64,6 +64,13 @@ Data, KPIs, scoring and name resolution are plain Python. The LLM picks a tool, 
 5. *The same city name in two states* ("Portland": PDX or PWM) is never guessed; it comes back as a question.
 
 Every assumed reading is stated in the answer. A test checks that each covered airport can be reached by its own city name, so a coverage change cannot silently break lookup.
+
+**Run the chat** (needs `pip install -e ".[dev,app]"` and `ANTHROPIC_API_KEY` in the environment or in the repo's git-ignored `.env`; a variable already set in the shell wins over the file, and the key is never logged or stored):
+```bash
+uvicorn airport_agent.api:app_from_environment --factory      # API on 127.0.0.1:8000
+streamlit run ui/app.py                                       # chat page on localhost:8501
+```
+`POST /chat` takes `{"message": ..., "session_id": null}` and returns the answer, its status (`answered`, `data_only`, `abstained`, `unavailable`) and the assumptions, caveats and data sources, so the page can show them under every answer. Send the returned `session_id` back to continue a conversation ("and what about BOS?").
 
 **Run a tool without the LLM:** `airport-agent tool airport_score '{"airport": "LA"}'` prints exactly what the model would see.
 
@@ -148,6 +155,15 @@ Evals:
 - **Disclosures are read from the code-written notes.** That checks that the right tool ran. Whether the model also says it in words is the separate `proxy_wording` heuristic, kept without a threshold because it is a pattern match.
 - **The prompt is an argument, not a config key.** `build_agent(..., system_prompt=...)` defaults to the text in `prompts.py`. Variants are plain files passed with `--prompt`, so a candidate prompt never changes what users get until someone copies it into `prompts.py`.
 
+Chat API and page:
+- **No login, localhost only.** `/chat` has no authentication or rate limit and each question can make several paid model calls. It listens on 127.0.0.1 by default. Do not start it with `--host 0.0.0.0` on a network you do not trust: anyone who can reach it can spend the API budget, or open 200 sessions and push other people's conversations out of memory. Putting it on a network needs a login, a rate limit and a request-size limit first.
+- **Sessions live in memory.** One agent per conversation, forgotten after `session_ttl_minutes` idle or when `max_sessions` is exceeded (least recently used goes), and lost on restart. That is enough for one server process and breaks with several; sharing them needs a store such as Redis, which the exercise does not justify. A per-session lock runs one question at a time.
+- **The dataset is loaded once at start-up** (live traffic if reachable, else the snapshot), so a server left running for weeks reports data that ages. Restart to refresh; the data month is in every answer's sources.
+- **A first question that fails, or gets no reply from the model, leaves no session behind**, and the response then carries `session_id: null`. Errors cannot fill the store, and a client does not keep an id the server no longer has.
+- **The page holds no data and no key.** It only calls the API. The helpers that format a reply live in the package (`airport_agent/chat_render.py`) so they are tested without Streamlit, and so the page can import them when Streamlit puts only `ui/` on the import path.
+- **One model for routing and answering.** The agent loop is the router, so `router_model` in `config.yaml` is the model that picks tools and writes the answer. Splitting them is a change for when the model-backed evals show a reason to.
+- **Worst-case latency is minutes.** One question can make about six model calls, each with a 30 s timeout and one retry: up to 6 minutes. The page waits as long as the server may take (`Settings.request_budget_seconds`, derived from the same settings), so it does not report an outage while the server is still working. Typical questions take a few seconds.
+
 Code:
 - **Typed lambdas over `attrgetter` for sort keys.** `attrgetter("month")` takes the field name as a string that `mypy --strict` and renames can't check. `lambda m: m.month` is the same length and fully typed.
 - **Small helpers instead of long parsers.** `parse_traffic` reads, rejects truncation, groups, then checks coverage in four named steps (`history.py` holds the checks shared with the delays adapter). CLAUDE.md sets 20 lines as the target and about 30 as the point to split. That's a review convention; ruff only enforces complexity and argument count.
@@ -168,6 +184,6 @@ _TBD_
 
 ## Development
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev,app]"
 .venv/bin/ruff format . && .venv/bin/ruff check . && .venv/bin/mypy && .venv/bin/pytest
 ```

@@ -23,6 +23,12 @@ class Settings(BaseModel):
     min_confidence: float = Field(ge=0, le=1)
     max_plain_count: int = Field(ge=0)
     max_tool_rounds: int = Field(ge=1)
+    llm_max_tokens: int = Field(ge=64)
+    llm_timeout_seconds: float = Field(gt=0)
+    llm_retries: int = Field(ge=0)
+    session_ttl_minutes: float = Field(gt=0)
+    max_sessions: int = Field(ge=1)
+    max_message_chars: int = Field(ge=1)
     remembered_airports: int = Field(ge=1)
     fallback_max_lines: int = Field(ge=1)
     history_turns: int = Field(ge=1)
@@ -41,6 +47,12 @@ class Settings(BaseModel):
     min_airport_share: float = Field(gt=0, le=1)
     max_name_candidates: int = Field(ge=2)
     eval_thresholds: dict[str, float]
+
+    @property
+    def request_budget_seconds(self) -> float:
+        """Longest one question can take: every model call times out on every attempt."""
+        calls = self.max_tool_rounds + self.validation_retries + 1
+        return calls * self.llm_timeout_seconds * (self.llm_retries + 1)
 
     @field_validator("coverage_airports")
     @classmethod
