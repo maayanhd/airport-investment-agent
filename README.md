@@ -2,7 +2,7 @@
 
 A chat agent that helps analysts find US airports where modernization is likely to pay off, judged by passenger and flight-capacity pressure. It's a one-day exercise, so this README is the decision log: written before the code and updated as things get built.
 
-> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, and the tool layer (registry plus five tools) and the answer validator are done. The LLM loop and the evals are not. Sections marked _TBD_ get filled in as each milestone lands.
+> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, the tool layer (registry plus five tools), the answer validator, the agent loop and the offline eval harness are done. The live LLM client, the judge and the cost table are not. Sections marked _TBD_ get filled in as each milestone lands.
 
 ## 1. Scope
 In scope: US airports, public aviation data, and questions about congestion, long-haul share, capacity pressure and expansion candidates, with follow-ups ("and what about BOS?").
@@ -98,7 +98,19 @@ Why these choices:
 Smallest model that passes the eval for each step. The router and agent loop start with a Haiku-class model and escalate only if the evals show a gap. The judge is Sonnet-class and offline only. _Measured table TBD (M6)._
 
 ## 7. Evaluation
-_TBD (M6)_: a 40-question set (about 8 adversarial), tool-selection precision and recall with a confusion matrix, numeric checks against gold values, validator catch rate, and an LLM-as-judge rubric (answers the question, no invented information, tone, states assumptions) calibrated on hand-labelled samples. Results get appended to a ledger.
+`python -m evals.run --client oracle` runs the 40-question set in `evals/questions.yaml` (8 adversarial, 4 follow-ups with two turns each) through the real agent, tools and validator, then scores it with plain code and appends one row to `evals/ledger.jsonl`. It exits 1 if a metric is under its threshold in `config.yaml` (`eval_thresholds`). `--prompt FILE` swaps the system prompt, so two prompts are compared by running each and reading the two ledger rows (the row records the prompt name and a hash of its text). `--no-ledger` prints the report only. `--prompt` is refused for the oracle, which ignores the prompt, so two prompts can never look compared when they were not. Each ledger row has a `model_backed` flag and a `-dirty` suffix on the sha when tracked files differ from the commit. A misspelled key in `questions.yaml` is an error.
+
+| Metric | What it checks |
+|---|---|
+| `routing_precision`, `routing_recall` | tool names the agent called against the `calls` a case expects, plus a confusion matrix of the first expected tool against the first called tool |
+| `answered_rate` | answerable turns that ended `answered`; `data_only` or `abstained` means the validator had to step in |
+| `gold_match` | the headline figure of each expected call (top airport and score, delay rates, average miles) is run from the data and must appear in the answer as a whole token (7 is not found in 17%). A case whose expected call fails or has no headline figure is a failure, never a skip |
+| `abstention` | turns marked `expect: abstain` (out of scope, not covered, ambiguous, no data) where no tool succeeded, the reply states no figures, and it reads as a refusal or a question. A confident reply with no tool call does not count |
+| `disclosures` | the case's `must_state` items (data month, live or snapshot, proxy label, alias reading, "not a share"), read from the tool results' provenance and the caveat constants where they exist, not from rendered note wording |
+| `proxy_wording` | a heuristic, no threshold: the model's own text calls a proxy a proxy. The notes always carry the caveat, so this is the metric a prompt can move |
+
+Not run yet, and said so in every report: the LLM judge (`evals/rubric.md` is written but nothing has been scored with it), judge calibration, the model-cost table, and live mode. Until a live client exists, the only client is the oracle, which does what each case expects and words the answer from the tool output. Its job is to prove the harness and the agent code: every score should be 1.00, and a test checks that a deliberately wrong router is caught. **An oracle row says nothing about a model or a prompt**; prompt tuning starts when the live client lands.
+
 
 ## 8. Architecture and engineering principles
 KISS and YAGNI (no agent framework, vector DB or database). SOLID where it pays: small Protocols for the data source, LLM client and feedback store, and a tool registry. DRY: one config, schemas generated from pydantic models. KPIs are pure functions. ruff, `mypy --strict`, pytest and CI enforce it.
@@ -127,6 +139,14 @@ Tools:
 - **Say what was cut.** A ranking cut to `top_n` states how many scored airports are hidden and lists their codes, so a short list is not mistaken for the whole region. Partial-data airports that fell below the cut get their own line.
 - **Count signals against the configuration.** `unmet_demand` reports both the signals it computed and the number configured, so "3 strong of 3" cannot hide a missing fourth signal. The configured count comes from `score_weights`, so it cannot drift from the score.
 - **Different windows are flagged, not blocked.** Comparing airports whose delay data differs in length or end month still answers, with a caveat. Refusing would abstain on ordinary questions, since a month's lag or a gap is common; the caveat lets the analyst judge. An airport with too little delay data (under 9 months) is the case that does abstain.
+
+Evals:
+- **An oracle model, not a recorded one.** There are no real model responses to record yet, so the harness is proven with a stand-in that does what each case expects. The cost is that a prompt cannot be compared today; the benefit is that the metrics, ledger and thresholds are tested before a paid run depends on them.
+- **Gold figures are computed, not written down.** A case lists the tool calls it expects, and the harness runs them against the same snapshot to get the headline figures. The question file never goes stale when data is refreshed, and nobody can edit a gold value to make a case pass.
+- **`answered_rate` is how the validator shows up in the evals.** The agent only returns `answered` text that passed the validator, so grounding is 100% by construction. What varies between prompts is how often the first draft was rejected and the user got figures only or a refusal.
+- **Abstaining hides the tools it called.** An `abstained` answer carries no tool results, so routing for that turn reads as "called nothing". It is rare and only lowers recall, so it is left as is.
+- **Disclosures are read from the code-written notes.** That checks that the right tool ran. Whether the model also says it in words is the separate `proxy_wording` heuristic, kept without a threshold because it is a pattern match.
+- **The prompt is an argument, not a config key.** `build_agent(..., system_prompt=...)` defaults to the text in `prompts.py`. Variants are plain files passed with `--prompt`, so a candidate prompt never changes what users get until someone copies it into `prompts.py`.
 
 Code:
 - **Typed lambdas over `attrgetter` for sort keys.** `attrgetter("month")` takes the field name as a string that `mypy --strict` and renames can't check. `lambda m: m.month` is the same length and fully typed.
