@@ -62,8 +62,11 @@ class Agent:
         registry: ToolRegistry,
         settings: Settings,
         city_codes: Mapping[str, frozenset[str]],
+        *,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> None:
         self._llm = llm
+        self._system_prompt = system_prompt
         self._registry = registry
         self._settings = settings
         self._rules = Rules.from_settings(settings, city_codes)
@@ -140,7 +143,7 @@ class Agent:
         last = next((t for t in reversed(self._turns) if any(r.ok for r in t.results)), None)
         note = entities_note(last.results, self._settings.remembered_airports) if last else ""
 
-        return f"{SYSTEM_PROMPT}\n{note}" if note else SYSTEM_PROMPT
+        return f"{self._system_prompt}\n{note}" if note else self._system_prompt
 
     def _run_tools(self, calls: tuple[ToolCall, ...], turn: Turn) -> Message:
         outputs = []
@@ -197,6 +200,8 @@ class Agent:
         return Answer(Status.ABSTAINED, ABSTAIN_TEXT, problems=problems)
 
 
-def build_agent(llm: LlmClient, data: Dataset) -> Agent:
+def build_agent(llm: LlmClient, data: Dataset, *, system_prompt: str = SYSTEM_PROMPT) -> Agent:
     """The agent as it runs for a user: tools, settings and the covered cities all from `data`."""
-    return Agent(llm, build_registry(data), data.settings, data.city_codes())
+    registry = build_registry(data)
+
+    return Agent(llm, registry, data.settings, data.city_codes(), system_prompt=system_prompt)

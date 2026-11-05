@@ -21,7 +21,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "."]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "C90", "SIM", "PL", "RET"]
@@ -32,10 +32,11 @@ max-complexity = 10
 
 [tool.mypy]
 strict = true
-files = ["src"]
+files = ["src", "evals"]
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+pythonpath = ["."]
 markers = ["live: calls real external services; run locally only"]

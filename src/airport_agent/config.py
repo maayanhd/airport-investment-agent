@@ -40,6 +40,7 @@ class Settings(BaseModel):
     delays_min_months: int = Field(ge=3)
     min_airport_share: float = Field(gt=0, le=1)
     max_name_candidates: int = Field(ge=2)
+    eval_thresholds: dict[str, float]
 
     @field_validator("coverage_airports")
     @classmethod
