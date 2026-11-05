@@ -105,6 +105,11 @@ def run_cases(cases: list[Case], client: LlmClient, data: Dataset, prompt: str) 
     return outcomes
 
 
+def exit_code(run: Run) -> int:
+    """1 when a metric is under its threshold or any turn got no reply from the model."""
+    return 1 if failed_metrics(run) or run.summary.unavailable else 0
+
+
 def failed_metrics(run: Run) -> list[str]:
     return [name for name, minimum in run.thresholds.items() if run.summary.scores[name] < minimum]
 
@@ -125,7 +130,10 @@ def git_sha() -> str:
     if sha is None:
         return "unknown"
 
-    return f"{sha}-dirty" if _git("status", "--porcelain", "--untracked-files=no") else sha
+    ledger = f":!{LEDGER_PATH.relative_to(REPO).as_posix()}"  # a run's own row is not a change
+    changed = _git("status", "--porcelain", "--untracked-files=no", "--", ".", ledger)
+
+    return f"{sha}-dirty" if changed else sha
 
 
 def format_report(run: Run, settings: Settings) -> str:
@@ -144,6 +152,13 @@ def format_report(run: Run, settings: Settings) -> str:
         lines.append(
             f"| {name} | {score:.2f} | {minimum if minimum is not None else '-'} | {verdict} |"
         )
+
+    if run.summary.unavailable:
+        lines += [
+            "",
+            f"INVALID: {run.summary.unavailable} turn(s) got no reply from the model, "
+            "so these scores say nothing about it.",
+        ]
 
     lines += ["", "Failures:", *(f"- {failure}" for failure in run.summary.failures or ["none"])]
     lines += ["", "Confusion (expected -> called):"]
@@ -212,7 +227,9 @@ def build_run(args: argparse.Namespace, settings: Settings) -> Run:
     data = offline_dataset(settings)
     spec = CLIENTS[args.client]
     outcomes = run_cases(cases, spec.make(cases), data, prompt)
-    summary = summarize(outcomes, build_registry(data), settings.max_plain_count)
+    summary = summarize(
+        outcomes, build_registry(data), settings.max_plain_count, settings.year_range
+    )
 
     return Run(
         args.client,
@@ -237,7 +254,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         row = append_ledger(LEDGER_PATH, ledger_row(run, settings))
         print(f"Ledger: appended row {row} to {LEDGER_PATH.relative_to(REPO)}")
 
-    return 1 if failed_metrics(run) else 0
+    return exit_code(run)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from typing import Any
 
 from airport_agent.answer import Answer, Status
 from airport_agent.domain import Provenance
-from airport_agent.numbers import find_figures
+from airport_agent.numbers import Figure, find_figures
 from airport_agent.tools.common import PROXY_CAVEAT
 from airport_agent.tools.distance_profile import NOT_A_SHARE
 from airport_agent.tools.registry import ToolRegistry
@@ -107,6 +107,7 @@ class Summary:
     turns: int
     model_calls: int
     seconds: float
+    unavailable: int = 0  # turns where the model could not be reached: the scores are not valid
 
 
 def ratio(part: int, whole: int) -> float:
@@ -140,15 +141,28 @@ def confusion_matrix(outcomes: list[Outcome]) -> Counter[tuple[str, str]]:
     return Counter((first(o.expected), first(o.called)) for o in outcomes)
 
 
-def has_figures(text: str, max_plain_count: int) -> bool:
-    """Whether text states a number that is more than a plain small count ("top 3")."""
-    return any(f.unit or f.has_separator or f.value > max_plain_count for f in find_figures(text))
+def _is_figure(figure: Figure, max_plain_count: int, years: tuple[int, int]) -> bool:
+    if figure.unit or figure.has_separator:
+        return True
+
+    is_year = years[0] <= figure.value <= years[1]  # "data through 2026" is not a figure
+
+    return figure.value > max_plain_count and not is_year
 
 
-def is_abstention(answer: Answer, max_plain_count: int) -> bool:
+def has_figures(text: str, max_plain_count: int, years: tuple[int, int]) -> bool:
+    """Whether text states a number that is more than a plain count ("top 3") or a year."""
+    return any(_is_figure(f, max_plain_count, years) for f in find_figures(text))
+
+
+def is_abstention(answer: Answer, max_plain_count: int, years: tuple[int, int]) -> bool:
     """No tool succeeded and the reply gives no figures. Without a tool the reply must also read as
-    a refusal or a question, so a confident answer from the model's own head does not count."""
-    if any(result.ok for result in answer.results) or has_figures(answer.text, max_plain_count):
+    a refusal or a question, so a confident answer from the model's own head does not count.
+    An unavailable model never refused anything, whatever its apology says."""
+    if answer.status is Status.UNAVAILABLE or any(result.ok for result in answer.results):
+        return False
+
+    if has_figures(answer.text, max_plain_count, years):
         return False
 
     return answer.status is Status.ABSTAINED or DECLINE_WORDING.search(answer.text) is not None
@@ -192,8 +206,11 @@ def headline(result: ToolResult) -> list[str]:
 
 def quotes(text: str, figure: str) -> bool:
     """The figure as a whole token: 7 is not in 17%, and BOS is not in BOSTON."""
-    return (
-        re.search(rf"(?<![\w.,]){re.escape(figure)}(?!\w|[.,]\d)", text, re.IGNORECASE) is not None
+    spellings = {figure, figure.removesuffix(".0")}  # the validator reads 62 and 62.0 as equal
+
+    return any(
+        re.search(rf"(?<![\w.,]){re.escape(s)}(?!\w|[.,]\d)", text, re.IGNORECASE)
+        for s in spellings
     )
 
 
@@ -252,8 +269,8 @@ def _judge_answerable(outcome: Outcome, registry: ToolRegistry) -> Verdict:
     )
 
 
-def _judge_declined(outcome: Outcome, max_plain_count: int) -> Verdict:
-    abstained = is_abstention(outcome.answer, max_plain_count)
+def _judge_declined(outcome: Outcome, max_plain_count: int, years: tuple[int, int]) -> Verdict:
+    abstained = is_abstention(outcome.answer, max_plain_count, years)
     problems = _routing_problems(outcome)
 
     if not abstained:
@@ -262,15 +279,19 @@ def _judge_declined(outcome: Outcome, max_plain_count: int) -> Verdict:
     return Verdict(outcome, problems, abstained=abstained)
 
 
-def judge(outcome: Outcome, registry: ToolRegistry, max_plain_count: int) -> Verdict:
+def judge(
+    outcome: Outcome, registry: ToolRegistry, max_plain_count: int, years: tuple[int, int]
+) -> Verdict:
     if outcome.turn.expect is Expect.ANSWER:
         return _judge_answerable(outcome, registry)
 
-    return _judge_declined(outcome, max_plain_count)
+    return _judge_declined(outcome, max_plain_count, years)
 
 
-def summarize(outcomes: list[Outcome], registry: ToolRegistry, max_plain_count: int) -> Summary:
-    verdicts = [judge(outcome, registry, max_plain_count) for outcome in outcomes]
+def summarize(
+    outcomes: list[Outcome], registry: ToolRegistry, max_plain_count: int, years: tuple[int, int]
+) -> Summary:
+    verdicts = [judge(outcome, registry, max_plain_count, years) for outcome in outcomes]
     precision, recall = routing_scores(outcomes)
     scores = {
         "routing_precision": precision,
@@ -290,6 +311,7 @@ def summarize(outcomes: list[Outcome], registry: ToolRegistry, max_plain_count: 
         len(outcomes),
         sum(o.model_calls for o in outcomes),
         sum(o.seconds for o in outcomes),
+        sum(o.answer.status is Status.UNAVAILABLE for o in outcomes),
     )
 
 

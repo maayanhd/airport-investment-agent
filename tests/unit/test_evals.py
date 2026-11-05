@@ -10,10 +10,10 @@ from pydantic import ValidationError
 
 from airport_agent.agent import build_agent
 from airport_agent.answer import Answer, Notes, Status
-from airport_agent.config import Settings
+from airport_agent.config import Settings, load_settings
 from airport_agent.dataset import Dataset
 from airport_agent.llm import Message, ToolCall
-from airport_agent.prompts import SYSTEM_PROMPT
+from airport_agent.prompts import SYSTEM_PROMPT, UNAVAILABLE_TEXT
 from airport_agent.tools import build_registry
 from airport_agent.tools.result import ToolResult
 from evals import run as run_module
@@ -28,10 +28,20 @@ from evals.metrics import (
     summarize,
 )
 from evals.oracle import Oracle
-from evals.run import Run, append_ledger, failed_metrics, parse_args, read_prompt, run_cases
+from evals.run import (
+    Run,
+    append_ledger,
+    exit_code,
+    failed_metrics,
+    format_report,
+    parse_args,
+    read_prompt,
+    run_cases,
+)
 
 ACCEPTANCE_TOOLS = {"rank_region", "compare_congestion", "distance_profile", "unmet_demand"}
 MAX_PLAIN = 10
+YEARS = (1990, 2099)
 
 
 class AlwaysScores:
@@ -70,7 +80,7 @@ class NeverUsesTools:
 def _summary(dataset: Dataset, cases: list[Case], client: Any) -> Summary:
     outcomes = run_cases(cases, client, dataset, SYSTEM_PROMPT)
 
-    return summarize(outcomes, build_registry(dataset), MAX_PLAIN)
+    return summarize(outcomes, build_registry(dataset), MAX_PLAIN, YEARS)
 
 
 def _outcome(turn: Turn, answer: Answer) -> Outcome:
@@ -140,11 +150,11 @@ def test_a_reply_with_figures_is_not_an_abstention() -> None:
     refused = Answer(Status.ABSTAINED, "I could not verify an answer.")
     small_count = Answer(Status.ANSWERED, "Which of the 2 airports do you mean?")
 
-    assert is_abstention(plain, MAX_PLAIN)
-    assert is_abstention(small_count, MAX_PLAIN)
-    assert not is_abstention(figures, MAX_PLAIN)
-    assert not is_abstention(confident, MAX_PLAIN)
-    assert is_abstention(refused, MAX_PLAIN)
+    assert is_abstention(plain, MAX_PLAIN, YEARS)
+    assert is_abstention(small_count, MAX_PLAIN, YEARS)
+    assert not is_abstention(figures, MAX_PLAIN, YEARS)
+    assert not is_abstention(confident, MAX_PLAIN, YEARS)
+    assert is_abstention(refused, MAX_PLAIN, YEARS)
 
 
 @pytest.mark.parametrize(
@@ -173,7 +183,9 @@ def test_a_case_whose_expected_call_fails_is_a_failure_not_a_skip(dataset: Datas
         }
     )
     answer = Answer(Status.ANSWERED, "Narnia is great.", Notes())
-    summary = summarize([_outcome(broken.turns[0], answer)], build_registry(dataset), MAX_PLAIN)
+    summary = summarize(
+        [_outcome(broken.turns[0], answer)], build_registry(dataset), MAX_PLAIN, YEARS
+    )
 
     assert summary.scores["gold_match"] == 0.0
     assert any("fails, so it has no gold figures" in f for f in summary.failures)
@@ -306,3 +318,52 @@ def test_a_prompt_file_replaces_the_default_and_reaches_the_model(
 
     assert (name, llm.calls[0]["system"]) == ("terse", "Be terse.")
     assert read_prompt(None) == (SYSTEM_PROMPT, "default")
+
+
+def test_an_unavailable_model_is_never_a_correct_refusal() -> None:
+    down = Answer(Status.UNAVAILABLE, UNAVAILABLE_TEXT)
+
+    assert not is_abstention(down, MAX_PLAIN, YEARS)
+
+
+def test_a_run_with_unavailable_turns_is_invalid_and_exits_1(dataset: Dataset) -> None:
+    case = next(c for c in load_cases() if c.turns[0].expect is Expect.ABSTAIN)
+    down = Answer(Status.UNAVAILABLE, UNAVAILABLE_TEXT)
+    summary = summarize([_outcome(case.turns[0], down)], build_registry(dataset), MAX_PLAIN, YEARS)
+    run = Run("live", True, "default", "x", "abc", summary, {}, {})
+
+    assert summary.scores["abstention"] == 0.0
+    assert summary.unavailable == 1
+    assert exit_code(run) == 1
+    assert "INVALID: 1 turn(s)" in format_report(run, load_settings())
+
+
+def test_a_refusal_may_name_the_data_year() -> None:
+    refusal = Answer(Status.ANSWERED, "I cannot answer that from the data through 2026.")
+    figure = Answer(Status.ANSWERED, "I cannot say, but about 2,026 flights ran.")
+
+    assert is_abstention(refusal, MAX_PLAIN, YEARS)
+    assert not is_abstention(figure, MAX_PLAIN, YEARS)
+
+
+def test_a_score_ending_in_zero_may_be_written_without_it() -> None:
+    assert quotes("BOS scores 62 out of 100.", "62.0")
+    assert quotes("BOS scores 62.0.", "62.0")
+    assert not quotes("BOS scores 620.", "62.0")
+    assert not quotes("BOS scores 6.", "62.0")
+
+
+def test_the_ledger_is_not_counted_as_a_change_to_the_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, ...]] = []
+
+    def fake_git(*args: str) -> str | None:
+        seen.append(args)
+
+        return "abc1234" if args[0] == "rev-parse" else ""
+
+    monkeypatch.setattr(run_module, "_git", fake_git)
+
+    assert run_module.git_sha() == "abc1234"
+    assert ":!evals/ledger.jsonl" in seen[-1]
