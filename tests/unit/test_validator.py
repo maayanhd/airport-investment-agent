@@ -7,12 +7,13 @@ from hypothesis import strategies as st
 
 from airport_agent.dataset import Dataset
 from airport_agent.domain import DataMode, Provenance
+from airport_agent.evidence import gather_evidence
 from airport_agent.tools import build_registry
 from airport_agent.tools.result import ToolResult
-from airport_agent.validator import ViolationKind, gather_evidence, validate_answer
+from airport_agent.validator import Rules, ViolationKind, validate_answer
 
-COVERAGE = {"BOS", "SFO", "ANC", "JFK", "LAX", "SEA"}
-RULES: dict[str, Any] = {"max_plain_count": 10, "years": (1990, 2099)}
+COVERAGE = {"BOS", "SFO", "ANC", "JFK", "LAX", "SEA", "SNA"}
+RULES = Rules(COVERAGE, max_plain_count=10, years=(1990, 2099))
 
 
 def _result(**fields: Any) -> ToolResult:
@@ -22,7 +23,7 @@ def _result(**fields: Any) -> ToolResult:
 def _check(answer: str, *results: ToolResult, question: str = "") -> list[str]:
     evidence = gather_evidence(results, question)
 
-    return [v.text for v in validate_answer(answer, evidence, coverage=COVERAGE, **RULES)]
+    return [v.text for v in validate_answer(answer, evidence, RULES)]
 
 
 DATA = _result(
@@ -46,7 +47,7 @@ DATA = _result(
         "Flights average 1,860 miles, or 1860 miles.",
         "The score is 62.2.",
         "Load factor has weight 0.3 and a floor of 50%.",
-        "That is a fall of 25.30%.",
+        "That is 25.30%.",
     ],
 )
 def test_numbers_copied_from_a_tool_result_pass(answer: str) -> None:
@@ -139,9 +140,7 @@ def test_ordinary_capitalised_words_are_not_airports() -> None:
 
 def test_violations_say_what_kind_they_are() -> None:
     evidence = gather_evidence([DATA])
-    kinds = {
-        v.kind for v in validate_answer("JFK has 99.9%.", evidence, coverage=COVERAGE, **RULES)
-    }
+    kinds = {v.kind for v in validate_answer("JFK has 99.9%.", evidence, RULES)}
 
     assert kinds == {ViolationKind.NUMBER, ViolationKind.AIRPORT}
 
@@ -155,10 +154,7 @@ def test_an_honest_answer_built_from_a_real_score_passes(dataset: Dataset) -> No
     )
     evidence = gather_evidence([result], "how is BOS?")
 
-    assert (
-        validate_answer(answer, evidence, coverage=dataset.settings.coverage_airports, **RULES)
-        == []
-    )
+    assert validate_answer(answer, evidence, Rules.from_settings(dataset.settings)) == []
 
 
 def test_changing_one_digit_of_a_real_answer_is_caught(dataset: Dataset) -> None:
@@ -166,7 +162,7 @@ def test_changing_one_digit_of_a_real_answer_is_caught(dataset: Dataset) -> None
     wrong = f"BOS scores {result.data['score'] + 0.1:.1f}."
     evidence = gather_evidence([result])
 
-    found = validate_answer(wrong, evidence, coverage=dataset.settings.coverage_airports, **RULES)
+    found = validate_answer(wrong, evidence, Rules.from_settings(dataset.settings))
 
     assert [v.kind for v in found] == [ViolationKind.NUMBER]
 
@@ -184,7 +180,7 @@ def test_every_covered_airport_can_quote_its_own_score(dataset: Dataset) -> None
             answer = f"{code} scores {result.data['score']}"
             checked += 1
 
-            assert validate_answer(answer, evidence, coverage=coverage, **RULES) == []
+            assert validate_answer(answer, evidence, Rules.from_settings(dataset.settings)) == []
 
     assert checked > 0.9 * len(coverage)
 
@@ -247,4 +243,192 @@ def test_only_codes_written_in_capitals_in_the_question_are_allowed() -> None:
 def test_any_answer_gives_a_list_and_never_raises(answer: str) -> None:
     evidence = gather_evidence([DATA], "question")
 
-    assert isinstance(validate_answer(answer, evidence, coverage=COVERAGE, **RULES), list)
+    assert isinstance(validate_answer(answer, evidence, RULES), list)
+
+
+GROWTH = _result(data={"airport": {"iata": "BOS"}, "growth": {"value": -0.023, "shown": "-2.3%"}})
+RISING = _result(data={"airport": {"iata": "SEA"}, "growth": {"value": 0.041, "shown": "4.1%"}})
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["BOS traffic fell 2.3%.", "BOS traffic fell by 2.3%.", "Growth was -2.3%.", "It is 2.3%."],
+)
+def test_a_fall_may_be_quoted_in_the_ways_people_write_it(answer: str) -> None:
+    assert _check(answer, GROWTH) == []
+
+
+@pytest.mark.parametrize(
+    ("answer", "bad"),
+    [
+        ("BOS traffic grew 2.3%.", ["2.3% (the tools give it as a fall)"]),
+        ("BOS traffic is up 2.3%.", ["2.3% (the tools give it as a fall)"]),
+        ("BOS growth was +2.3%.", ["+2.3% (the tools give it as negative)"]),
+    ],
+)
+def test_a_flipped_direction_is_flagged(answer: str, bad: list[str]) -> None:
+    assert _check(answer, GROWTH) == bad
+
+
+def test_a_positive_value_cannot_be_called_a_fall_or_given_a_minus() -> None:
+    assert _check("SEA traffic dropped 4.1%.", RISING) == ["4.1% (the tools give it as a rise)"]
+    assert _check("SEA growth was -4.1%.", RISING) == ["-4.1% (the tools give it without a minus)"]
+    assert _check("SEA traffic rose 4.1%.", RISING) == []
+
+
+def test_a_level_after_a_direction_word_is_not_read_as_a_change() -> None:
+    assert _check("Delays fell to 2.3% of flights.", GROWTH) == []
+
+
+def test_a_hyphen_in_a_range_is_not_a_minus_sign() -> None:
+    result = _result(data={"a": 5, "b": 10.5})
+
+    assert _check("Between 5-10.5 hours.", result) == []
+
+
+def test_an_unwritten_sign_is_not_enough_to_flag_a_number() -> None:
+    result = _result(data={"airport": {"iata": "BOS"}, "gap": -0.031}, caveats=["A 3.1 gap"])
+
+    assert _check("The gap is 3.1 points.", result) == []
+
+
+BOTH = _result(
+    data={
+        "ranking": [
+            {"rank": 1, "airport": {"iata": "BOS"}, "score": 62.2},
+            {"rank": 2, "airport": {"iata": "SFO"}, "score": 55.1},
+        ],
+        "covered_airports": 12,
+    }
+)
+
+
+def test_a_number_from_another_airport_is_flagged() -> None:
+    assert _check("BOS scores 62.2.", BOTH) == []
+    assert _check("SFO scores 62.2.", BOTH) == ["62.2 (not a figure for SFO)"]
+
+
+def test_a_sentence_naming_two_airports_may_use_either_ones_number() -> None:
+    assert _check("BOS scores 62.2 and SFO scores 55.1.", BOTH) == []
+
+
+def test_a_shared_number_fits_every_airport() -> None:
+    assert _check("SFO is one of 12 covered airports, 12.0 in all.", BOTH) == []
+
+
+def test_each_line_of_a_list_is_checked_on_its_own() -> None:
+    assert _check("- BOS: 62.2\n- SFO: 55.1", BOTH) == []
+    assert _check("- BOS: 55.1\n- SFO: 55.1", BOTH) == ["55.1 (not a figure for BOS)"]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "BOS ranks 1st.",
+        "SFO is ranked #2.",
+        "BOS is the strongest candidate.",
+        "BOS ranks ahead of SFO.",
+        "BOS is a stronger candidate than SFO.",
+        "SFO has a lower score than BOS.",
+    ],
+)
+def test_rank_claims_that_match_the_tool_pass(answer: str) -> None:
+    assert _check(answer, BOTH) == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "SFO ranks 1st.",
+        "BOS is ranked #2.",
+        "SFO is the strongest candidate.",
+        "SFO outranks BOS.",
+        "SFO is a stronger candidate than BOS.",
+        "BOS has a lower score than SFO.",
+    ],
+)
+def test_rank_claims_that_contradict_the_tool_are_flagged(answer: str) -> None:
+    assert _check(answer, BOTH) != []
+
+
+COMPARE = _result(
+    data={
+        "airports": [
+            {"airport": {"iata": "LAX"}, "delay_rate": {"value": 0.25, "shown": "25.0%"}},
+            {"airport": {"iata": "SNA"}, "delay_rate": {"value": 0.18, "shown": "18.0%"}},
+        ],
+        "more_delayed": "LAX",
+    }
+)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "LAX is more congested than SNA.",
+        "SNA has fewer delays than LAX.",
+        "SNA is less delayed than LAX.",
+        "SNA has better on-time flights than LAX, and a lower delay rate than LAX.",
+    ],
+)
+def test_a_congestion_comparison_that_matches_the_tool_passes(answer: str) -> None:
+    assert _check(answer, COMPARE) == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "SNA is more congested than LAX.",
+        "LAX has fewer delays than SNA.",
+        "LAX is less delayed than SNA.",
+    ],
+)
+def test_a_congestion_comparison_the_wrong_way_round_is_flagged(answer: str) -> None:
+    found = validate_answer(answer, gather_evidence([COMPARE]), RULES)
+
+    assert [v.kind for v in found] == [ViolationKind.CLAIM]
+
+
+def test_a_comparison_with_no_tool_decision_is_not_checked() -> None:
+    undecided = _result(data={"airports": []})
+
+    assert _check("SNA is more congested than LAX.", undecided, question="SNA or LAX?") == []
+
+
+CITIES = {"boston": frozenset({"BOS"}), "new york": frozenset({"JFK", "LGA"})}
+
+
+def test_a_covered_city_named_in_words_needs_a_tool_result_for_it() -> None:
+    rules = Rules(COVERAGE, max_plain_count=10, years=(1990, 2099), city_codes=CITIES)
+    evidence = gather_evidence([RISING], "how is Seattle?")
+
+    found = validate_answer("Boston is bigger, as is New York.", evidence, rules)
+
+    assert [v.text for v in found] == ["boston", "new york"]
+
+
+def test_a_city_in_the_question_or_behind_a_returned_airport_is_allowed() -> None:
+    rules = Rules(COVERAGE, max_plain_count=10, years=(1990, 2099), city_codes=CITIES)
+
+    asked = gather_evidence([RISING], "what about Boston?")
+    returned = gather_evidence([GROWTH], "")
+
+    assert validate_answer("Boston looks fine.", asked, rules) == []
+    assert validate_answer("Boston looks fine.", returned, rules) == []
+
+
+def test_real_congestion_and_ranking_results_feed_the_claim_checks(dataset: Dataset) -> None:
+    registry = build_registry(dataset)
+    compare = registry.call("compare_congestion", {"airport_a": "LAX", "airport_b": "SNA"})
+    ranking = registry.call("rank_region", {"region": "New England", "top_n": 2})
+    evidence = gather_evidence([compare, ranking], "LAX vs SNA, and New England")
+    worse = compare.data["more_delayed"]
+    better = "SNA" if worse == "LAX" else "LAX"
+    first, second = (row["airport"]["iata"] for row in ranking.data["ranking"])
+    rules = Rules.from_settings(dataset.settings)
+
+    right = f"{worse} is more delayed than {better}. {first} is a stronger candidate than {second}."
+    wrong = f"{better} is more delayed than {worse}. {second} is a stronger candidate than {first}."
+
+    assert validate_answer(right, evidence, rules) == []
+    assert [v.kind for v in validate_answer(wrong, evidence, rules)] == [ViolationKind.CLAIM] * 2

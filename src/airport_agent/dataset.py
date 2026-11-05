@@ -10,7 +10,7 @@ from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import TrafficHistory, load_traffic
-from airport_agent.domain import Provenance
+from airport_agent.domain import Provenance, search_words
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,18 @@ class Dataset:
             code: sum(m.passengers for m in self.traffic.series(code)[-12:])
             for code in self.settings.coverage_airports
         }
+
+    def city_codes(self) -> dict[str, frozenset[str]]:
+        """Covered cities as lower-case words, with their airports, to catch a city named alone."""
+        cities: dict[str, set[str]] = {}
+
+        for airport in self.catalog.all():
+            phrase = " ".join(search_words(airport.city))
+
+            if phrase:
+                cities.setdefault(phrase, set()).add(airport.iata)
+
+        return {city: frozenset(codes) for city, codes in cities.items()}
 
     def sources(self) -> list[Provenance]:
         sources = [self.catalog.provenance, self.traffic.provenance]
