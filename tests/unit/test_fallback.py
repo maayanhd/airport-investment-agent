@@ -34,3 +34,22 @@ def test_a_long_result_is_cut_with_a_count() -> None:
 
     assert len(lines) == 4
     assert lines[-1] == "- ... 5 more values not shown"
+
+
+def test_score_components_are_named_so_the_lines_can_be_told_apart(dataset: Dataset) -> None:
+    result = build_registry(dataset).call("airport_score", {"airport": "ORH"})
+
+    text = figures_text([result], 40)
+
+    for name in ("passenger_growth", "load_factor", "delay_pressure", "capacity_gap"):
+        assert f"airport_score / ORH / components / {name}: " in text
+
+
+def test_bookkeeping_fields_are_not_printed(dataset: Dataset) -> None:
+    result = build_registry(dataset).call("rank_region", {"region": "AK", "top_n": 2})
+
+    text = figures_text([result], 40)
+
+    assert "complete" not in text
+    assert "states" not in text
+    assert "rank_region / ranking / BET / score: " in text

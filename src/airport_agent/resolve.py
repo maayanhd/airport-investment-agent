@@ -1,7 +1,7 @@
 """Turn what a user typed ("LA", "Santa Ana", "chicago") into a covered airport code."""
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -131,3 +131,20 @@ def resolve_airport(
     return _by_city(query, words, catalog, volume, max_candidates) or _by_name(
         query, words, catalog, max_candidates
     )
+
+
+def without_readings(
+    found: Resolution, query: str, exclude: Collection[str], catalog: OurAirportsCatalog
+) -> Resolution:
+    """Drop airports the user named elsewhere from the other readings: when asked to compare LA
+    with Santa Ana, SNA is not an alternative reading of LA."""
+    others = [code for code in found.alternatives if code not in exclude]
+
+    if (
+        found.status is not Match.RESOLVED
+        or found.code is None
+        or len(others) == len(found.alternatives)
+    ):
+        return found
+
+    return _read_as(query, found.code, others, catalog)

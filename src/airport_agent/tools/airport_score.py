@@ -1,15 +1,17 @@
 from pydantic import BaseModel, Field
 
 from airport_agent.dataset import Dataset
-from airport_agent.display import FORMATS, LABELS, describe_scoring
+from airport_agent.display import FORMATS, LABELS, describe_scoring, passengers
 from airport_agent.scoring import AirportScore
 from airport_agent.tools.common import (
     PROXY_CAVEAT,
     RATIO_DIGITS,
+    SIZE_CAVEAT,
     Resolved,
     airport_ref,
     data_caveats,
     kpis_for,
+    metric,
     month,
     partial_caveat,
     resolve,
@@ -63,6 +65,7 @@ class AirportScoreTool:
         result = score_for(self._data, kpis)
         data = {
             "airport": airport_ref(self._data, resolved.code),
+            "passengers_12m": metric(self._data.passengers_12m(resolved.code), passengers, 0),
             "score": None if result.score is None else round(result.score, 1),
             "confidence": round(result.confidence, 2),
             "components": _components(result),
@@ -83,6 +86,7 @@ class AirportScoreTool:
             assumptions=[*resolved.assumptions, *describe_scoring(self._data.settings)],
             caveats=[
                 PROXY_CAVEAT,
+                SIZE_CAVEAT,
                 *partial_caveat(result, resolved.code, self._data),
                 *data_caveats(self._data),
             ],

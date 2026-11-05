@@ -1,5 +1,6 @@
 # All tunable assumptions live here and are echoed to the user as "assumptions".
 long_haul_min_miles: 1500
+congestion_tie_gap: 0.005       # two delay rates closer than this (0.5 percentage points) are called equal
 regions:                        # names the region ranking understands; a two-letter state code also works
   new england: [CT, MA, ME, NH, RI, VT]
 strong_signal_scaled: 0.5       # a score component at or above this position in its fixed range counts as a strong signal

@@ -419,11 +419,11 @@ def test_a_city_in_the_question_or_behind_a_returned_airport_is_allowed() -> Non
 
 def test_real_congestion_and_ranking_results_feed_the_claim_checks(dataset: Dataset) -> None:
     registry = build_registry(dataset)
-    compare = registry.call("compare_congestion", {"airport_a": "LAX", "airport_b": "SNA"})
+    compare = registry.call("compare_congestion", {"airport_a": "SFO", "airport_b": "ANC"})
     ranking = registry.call("rank_region", {"region": "New England", "top_n": 2})
-    evidence = gather_evidence([compare, ranking], "LAX vs SNA, and New England")
-    worse = compare.data["more_delayed"]
-    better = "SNA" if worse == "LAX" else "LAX"
+    evidence = gather_evidence([compare, ranking], "SFO vs ANC, and New England")
+    worse = compare.data["more_delayed"]  # a clear gap: LAX vs SNA is now called a tie
+    better = "ANC" if worse == "SFO" else "SFO"
     first, second = (row["airport"]["iata"] for row in ranking.data["ranking"])
     rules = Rules.from_settings(dataset.settings)
 
@@ -521,3 +521,27 @@ def test_a_figure_between_two_airports_does_not_hide_the_comparison() -> None:
     assert _check("SNA, at 18.0%, is more delayed than LAX.", COMPARE) == [
         "SNA, at 18.0%, is more delayed than LAX"
     ]
+
+
+TIED = _result(
+    data={
+        "airports": [
+            {"airport": {"iata": "LAX"}, "delay_rate": {"value": 0.20, "shown": "20.0%"}},
+            {"airport": {"iata": "SNA"}, "delay_rate": {"value": 0.201, "shown": "20.1%"}},
+        ],
+        "more_delayed": None,
+        "no_meaningful_difference": True,
+    }
+)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["LAX is more delayed than SNA.", "SNA is less delayed than LAX."],
+)
+def test_a_delay_ranking_of_two_airports_the_tool_called_equal_is_flagged(answer: str) -> None:
+    assert _check(answer, TIED) != []
+
+
+def test_saying_two_tied_airports_are_alike_is_allowed() -> None:
+    assert _check("LAX and SNA have similar delay rates, 20.0% and 20.1%.", TIED) == []

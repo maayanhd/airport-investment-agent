@@ -6,10 +6,14 @@ from datetime import date
 
 from airport_agent.dataset import Dataset
 from airport_agent.kpis import AirportKpis, compute_kpis
-from airport_agent.resolve import Match, resolve_airport
+from airport_agent.resolve import Match, Resolution, resolve_airport, without_readings
 from airport_agent.scoring import AirportScore, score_airport
 from airport_agent.tools.result import ErrorKind, ToolResult
 
+SIZE_CAVEAT = (
+    "The score does not measure airport size: read it next to the airport's 12-month "
+    "passengers, because a small airport can score high on growth alone."
+)
 RATIO_DIGITS = 4  # decimals kept for fractions such as 0.2531
 PROXY_CAVEAT = (
     "Delay pressure is a congestion proxy (share of operated flights 15+ minutes late, "
@@ -28,20 +32,26 @@ class Resolved:
     assumptions: list[str]  # how the name was read, if it was not a code
 
 
-def resolve(data: Dataset, tool: str, query: str) -> Resolved | ToolResult:
-    """The airport code, or the failure to hand back so the agent asks or abstains."""
-    found = resolve_airport(
+def _resolution(data: Dataset, query: str) -> Resolution:
+    return resolve_airport(
         query,
         data.catalog,
         data.settings.airport_aliases,
         max_candidates=data.settings.max_name_candidates,
-        volume=data.passenger_volume(),
+        volume=data.passenger_volume,
     )
 
+
+def _resolved_or_failure(tool: str, found: Resolution) -> Resolved | ToolResult:
     if found.status is Match.RESOLVED and found.code:
         return Resolved(found.code, [found.note] if found.note else [])
 
     return ToolResult.failure(tool, ERROR_KINDS[found.status], found.note, list(found.alternatives))
+
+
+def resolve(data: Dataset, tool: str, query: str) -> Resolved | ToolResult:
+    """The airport code, or the failure to hand back so the agent asks or abstains."""
+    return _resolved_or_failure(tool, _resolution(data, query))
 
 
 def data_caveats(data: Dataset) -> list[str]:
@@ -57,15 +67,18 @@ def data_caveats(data: Dataset) -> list[str]:
 
 
 def resolve_all(data: Dataset, tool: str, queries: list[str]) -> list[Resolved] | ToolResult:
+    found = [_resolution(data, query) for query in queries]
+    named = {f.code for f in found if f.code}
     resolved = []
 
-    for query in queries:
-        found = resolve(data, tool, query)
+    for query, one in zip(queries, found, strict=True):
+        others = named - {one.code}
+        result = _resolved_or_failure(tool, without_readings(one, query, others, data.catalog))
 
-        if not isinstance(found, Resolved):
-            return found
+        if not isinstance(result, Resolved):
+            return result
 
-        resolved.append(found)
+        resolved.append(result)
 
     return resolved
 

@@ -77,7 +77,7 @@ def test_every_covered_airport_resolves_to_itself_by_code(dataset: Dataset) -> N
             dataset.catalog,
             settings.airport_aliases,
             max_candidates=settings.max_name_candidates,
-            volume=dataset.passenger_volume(),
+            volume=dataset.passenger_volume,
         )
 
         assert (found.status, found.code) == (Match.RESOLVED, code), code

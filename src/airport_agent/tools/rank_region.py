@@ -4,14 +4,16 @@ from pydantic import BaseModel, Field
 
 from airport_agent.config import Settings
 from airport_agent.dataset import Dataset
-from airport_agent.display import describe_scoring
+from airport_agent.display import describe_scoring, passengers
 from airport_agent.domain import STATE_PATTERN, search_words
 from airport_agent.scoring import AirportScore, rank
 from airport_agent.tools.common import (
     PROXY_CAVEAT,
+    SIZE_CAVEAT,
     airport_ref,
     data_caveats,
     kpis_for,
+    metric,
     partial_caveat,
     score_for,
 )
@@ -58,6 +60,7 @@ def _row(data: Dataset, position: int, score: AirportScore) -> dict[str, object]
     return {
         "rank": position,
         "airport": airport_ref(data, score.iata),
+        "passengers_12m": metric(data.passengers_12m(score.iata), passengers, 0),
         "score": round(score.score or 0.0, 1),
         "confidence": round(score.confidence, 2),
         "complete": not score.missing,
@@ -152,6 +155,7 @@ class RankRegionTool:
             assumptions=_assumptions(self._data, args.region, states),
             caveats=[
                 PROXY_CAVEAT,
+                SIZE_CAVEAT,
                 *partial,
                 *_omitted(scored[args.top_n :]),
                 *data_caveats(self._data),

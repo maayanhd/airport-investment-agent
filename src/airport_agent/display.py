@@ -28,6 +28,13 @@ def points(value: float) -> str:
     return f"{100 * value:+.1f} pts"
 
 
+MILLION = 1_000_000
+
+
+def passengers(value: float) -> str:
+    return f"{value / MILLION:.1f} million" if value >= MILLION else f"{value:,.0f}"
+
+
 def minutes(value: float) -> str:
     return f"{value:.1f} min"
 

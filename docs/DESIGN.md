@@ -50,6 +50,9 @@ Without delay data, confidence would be 80%, the other three weights would be di
 - **Fixed coverage list** (`coverage_airports`, 97 airports). It's explicit and testable. Small airports are out and are reported as not covered.
 - **Proxies instead of unavailable measurements.** Some questions get a "closest supported indicator" answer rather than an exact one.
 - **Fixed score bounds** over percentile rank (see section 1).
+- **Size is shown, not scored.** Each ranked airport carries its 12-month passengers and a caveat, because folding size into the score would hide the tradeoff between growth and scale in a weight nobody could defend.
+- **A small gap is called equal.** `compare_congestion` names no winner within `congestion_tie_gap`, so a 0.1-point difference isn't presented as a result.
+- **A rejected answer falls back to the tools' own figures**, labelled as such, instead of showing unverified wording or nothing. The cost is a blunt answer; the benefit is that nothing unchecked reaches the user.
 - **Tool failures are results, not exceptions.** The registry rejects unknown arguments instead of dropping them, and turns a crash into a typed `internal_error`, so the model never sees a traceback or claims an option that didn't exist.
 - **No Protocols until a second implementation needs one.** That means less indirection now and one refactor later. The tool registry is the exception, since there will be many tools.
 - **Human review stays out of the chat path.** Automatic gates sit in the request path, feedback is reviewed asynchronously, and a person signs off at export.

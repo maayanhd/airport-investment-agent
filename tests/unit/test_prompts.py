@@ -1,6 +1,6 @@
 from airport_agent.answer import build_notes
 from airport_agent.dataset import Dataset
-from airport_agent.prompts import entities_note, rejection_feedback
+from airport_agent.prompts import SYSTEM_PROMPT, entities_note, rejection_feedback
 from airport_agent.tools import build_registry
 from airport_agent.tools.result import ErrorKind, ToolResult
 from airport_agent.validator import Violation, ViolationKind
@@ -63,3 +63,12 @@ def test_a_result_without_airports_leaves_that_part_out() -> None:
     result = ToolResult(tool="t", ok=True, data={"x": 1})
 
     assert entities_note([result], 8) == "Previous turn: tools t."
+
+
+def test_the_prompt_asks_for_the_wording_and_the_size_note_that_testing_showed_were_missing() -> (
+    None
+):
+    assert "percentage points" in SYSTEM_PROMPT
+    assert "score points" in SYSTEM_PROMPT
+    assert "passengers_12m" in SYSTEM_PROMPT
+    assert "Do not describe how the tools work" in SYSTEM_PROMPT

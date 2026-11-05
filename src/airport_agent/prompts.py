@@ -24,6 +24,11 @@ airport is not covered, or say the data is insufficient. Do not guess a reading 
 - If a name was read as an airport (for example "LA" as LAX), say so and offer the alternatives.
 - Follow-ups such as "and BOS?" mean the same question for the new airport. Use the earlier \
 conversation to resolve them.
+- Say "percentage points" for growth and gap figures, and "score points" for what a component \
+adds to the 0 to 100 score. Do not describe how the tools work or what they cannot do, unless a \
+tool result says so.
+- When ranking, show each airport's passengers_12m next to its score, quoted as given, and say the \
+score does not reflect airport size.
 - Be brief. Plain sentences, a short list when comparing.
 """
 ABSTAIN_TEXT = (
