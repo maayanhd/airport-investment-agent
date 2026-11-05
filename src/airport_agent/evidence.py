@@ -26,7 +26,7 @@ class Evidence:
     owned: Mapping[str, frozenset[Decimal]]  # airport code -> its figures
     words: frozenset[str]  # number words such as "half" that a result or the question used
     codes: frozenset[str]
-    ranks: Mapping[str, int]  # airport code -> the rank a tool gave it
+    rankings: tuple[Mapping[str, int], ...]  # one per tool result: airport code -> its rank
     delay_order: frozenset[tuple[str, str]]  # (more delayed, less delayed) as a tool decided
     question: str  # the question as padded lower-case words, for phrase lookups
 
@@ -39,7 +39,7 @@ class _Found:
     owned: dict[str, set[Decimal]] = field(default_factory=dict)
     words: set[str] = field(default_factory=set)
     codes: set[str] = field(default_factory=set)
-    ranks: dict[str, int] = field(default_factory=dict)
+    rankings: list[dict[str, int]] = field(default_factory=list)
     delay_order: set[tuple[str, str]] = field(default_factory=set)
 
     def add_number(self, value: Decimal, sign: int, owner: str | None) -> None:
@@ -113,7 +113,7 @@ def _record_structure(node: dict[str, object], owner: str | None, found: _Found)
     rank = node.get("rank")
 
     if owner and isinstance(rank, int) and not isinstance(rank, bool):
-        found.ranks[owner] = rank
+        found.rankings[-1][owner] = rank
 
     worse = _code(node.get("more_delayed"))
     rows = node.get("airports")
@@ -142,8 +142,11 @@ def gather_evidence(results: Sequence[ToolResult], question: str = "") -> Eviden
     found = _Found()
     dumps = [r.model_dump(mode="json", exclude={"sources"}) for r in results]
 
-    for item, owner in _walk(dumps, None):
-        _record(item, owner, found)
+    for dump in dumps:
+        found.rankings.append({})  # ranks are kept per tool result: two rankings can differ
+
+        for item, owner in _walk(dump, None):
+            _record(item, owner, found)
 
     found.add_text(question, None, either_sign=True)
 
@@ -155,7 +158,7 @@ def gather_evidence(results: Sequence[ToolResult], question: str = "") -> Eviden
         owned={code: frozenset(values) for code, values in found.owned.items()},
         words=frozenset(found.words),
         codes=frozenset(found.codes),
-        ranks=dict(found.ranks),
+        rankings=tuple(r for r in found.rankings if r),
         delay_order=frozenset(found.delay_order),
         question=f" {' '.join(search_words(question))} ",
     )

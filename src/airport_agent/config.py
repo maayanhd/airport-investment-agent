@@ -23,6 +23,8 @@ class Settings(BaseModel):
     min_confidence: float = Field(ge=0, le=1)
     max_plain_count: int = Field(ge=0)
     max_tool_rounds: int = Field(ge=1)
+    remembered_airports: int = Field(ge=1)
+    fallback_max_lines: int = Field(ge=1)
     history_turns: int = Field(ge=1)
     validation_retries: int = Field(ge=0)
     year_range: tuple[int, int]

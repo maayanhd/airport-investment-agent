@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from airport_agent.answer import NO_DATA, Answer, Status, build_notes
 from airport_agent.config import Settings
+from airport_agent.dataset import Dataset
 from airport_agent.evidence import gather_evidence
 from airport_agent.fallback import figures_text
 from airport_agent.llm import LlmClient, LlmError, Message, ToolCall, ToolOutput
@@ -18,6 +19,7 @@ from airport_agent.prompts import (
     entities_note,
     rejection_feedback,
 )
+from airport_agent.tools import build_registry
 from airport_agent.tools.registry import ToolRegistry
 from airport_agent.tools.result import ToolResult
 from airport_agent.validator import Rules, Violation, ViolationKind, validate_answer
@@ -45,7 +47,7 @@ class Agent:
         llm: LlmClient,
         registry: ToolRegistry,
         settings: Settings,
-        city_codes: Mapping[str, frozenset[str]] | None = None,
+        city_codes: Mapping[str, frozenset[str]],
     ) -> None:
         self._llm = llm
         self._registry = registry
@@ -66,11 +68,20 @@ class Agent:
 
         if answer.status is Status.ANSWERED:
             self._turns.append(Turn(turn.remembered(), turn.results))
-        else:  # keep the question and any tool results, but never the rejected drafts
-            reply = Message("assistant", text=answer.text)
-            self._turns.append(Turn([turn.messages[0], reply], list(answer.results)))
+        else:
+            self._turns.append(self._declined(turn, answer))
 
         return answer
+
+    @staticmethod
+    def _declined(turn: Turn, answer: Answer) -> Turn:
+        """Keep the question and the tools' results, so options stay visible, but not the drafts."""
+        kept = turn.remembered()
+
+        while kept and kept[-1].role == "assistant":  # the last draft, or a call never run
+            kept.pop()
+
+        return Turn([*kept, Message("assistant", text=answer.text)], list(turn.results))
 
     def _converse(self, turn: Turn, question: str) -> Answer:
         rounds = 0
@@ -104,7 +115,8 @@ class Agent:
         reply = self._llm.complete(
             system=self._system(),
             messages=[m for t in self._turns for m in t.messages] + turn.messages,
-            tools=self._tools if with_tools else [],
+            tools=self._tools,
+            allow_tools=with_tools,
         )
         turn.messages.append(reply)
 
@@ -112,7 +124,7 @@ class Agent:
 
     def _system(self) -> str:
         last = next((t for t in reversed(self._turns) if any(r.ok for r in t.results)), None)
-        note = entities_note(last.results) if last else ""
+        note = entities_note(last.results, self._settings.remembered_airports) if last else ""
 
         return f"{SYSTEM_PROMPT}\n{note}" if note else SYSTEM_PROMPT
 
@@ -154,7 +166,7 @@ class Agent:
             return self._abstain(problems)
 
         logger.warning("showed tool figures only: %s", "; ".join(problems))
-        text = f"{DATA_ONLY_TEXT}\n{figures_text(usable)}"
+        text = f"{DATA_ONLY_TEXT}\n{figures_text(usable, self._settings.fallback_max_lines)}"
 
         return Answer(Status.DATA_ONLY, text, build_notes(usable), tuple(usable), problems)
 
@@ -163,3 +175,8 @@ class Agent:
         logger.warning("abstained: %s", "; ".join(problems))
 
         return Answer(Status.ABSTAINED, ABSTAIN_TEXT, problems=problems)
+
+
+def build_agent(llm: LlmClient, data: Dataset) -> Agent:
+    """The agent as it runs for a user: tools, settings and the covered cities all from `data`."""
+    return Agent(llm, build_registry(data), data.settings, data.city_codes())

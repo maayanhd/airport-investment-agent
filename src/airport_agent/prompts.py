@@ -7,7 +7,6 @@ from airport_agent.domain import IATA_PATTERN, search_words
 from airport_agent.tools.result import ToolResult
 from airport_agent.validator import Violation, ViolationKind
 
-MAX_REMEMBERED_AIRPORTS = 8
 SYSTEM_PROMPT = """\
 You help analysts at an airport-modernization investor find US airports where expansion may pay off.
 
@@ -65,9 +64,8 @@ def _codes(node: object) -> Iterator[str]:
             yield from _codes(value)
 
 
-def entities_note(results: Sequence[ToolResult]) -> str:
-    """What the last turn with data was about, written by code, as a hint for follow-ups.
-    Only well-formed codes and cleaned region words go in: this text sits in the system prompt."""
+def entities_note(results: Sequence[ToolResult], max_airports: int) -> str:
+    """A follow-up hint about the last turn. Cleaned, because it is prompt text."""
     tools = list(dict.fromkeys(r.tool for r in results if r.ok))
     found = (c for r in results for c in _codes(r.data))
     codes = list(dict.fromkeys(c for c in found if re.fullmatch(IATA_PATTERN, c)))
@@ -76,7 +74,10 @@ def entities_note(results: Sequence[ToolResult]) -> str:
     if not tools:
         return ""
 
-    parts = [f"tools {', '.join(tools)}", f"airports {', '.join(codes[:MAX_REMEMBERED_AIRPORTS])}"]
+    parts = [f"tools {', '.join(tools)}"]
+
+    if codes:
+        parts.append(f"airports {', '.join(codes[:max_airports])}")
 
     if regions:
         parts.append(f"region {regions[-1]}")

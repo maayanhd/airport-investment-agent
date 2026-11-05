@@ -94,14 +94,21 @@ def _sentence_codes(sentence: str, rules: Rules) -> list[str]:
     return [c for c in CODE.findall(sentence) if c in rules.coverage]
 
 
+def _covered_codes_only(sentence: str, rules: Rules) -> str:
+    """Other all-capital words (FAA, USA) are lower-cased, so a claim cannot pair with them."""
+    return CODE.sub(
+        lambda m: m.group(0) if m.group(0) in rules.coverage else m.group(0).lower(), sentence
+    )
+
+
 def _sentence_violations(sentence: str, evidence: Evidence, rules: Rules) -> Iterator[Violation]:
     codes = _sentence_codes(sentence, rules)
     problems = (_figure_problem(f, codes, evidence, rules) for f in find_figures(sentence))
 
     yield from (Violation(ViolationKind.NUMBER, p) for p in problems if p)
-    yield from (
-        Violation(ViolationKind.CLAIM, p) for p in claim_problems(sentence, codes, evidence)
-    )
+    claims = claim_problems(_covered_codes_only(sentence, rules), codes, evidence)
+
+    yield from (Violation(ViolationKind.CLAIM, p) for p in claims)
 
 
 def _number_word_violations(answer: str, evidence: Evidence) -> Iterator[Violation]:

@@ -2,7 +2,7 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from airport_agent.agent import Agent
+from airport_agent.agent import Agent, build_agent
 from airport_agent.answer import Status
 from airport_agent.dataset import Dataset
 from airport_agent.llm import LlmError, Message, ToolCall
@@ -17,9 +17,21 @@ class ScriptedLlm:
         self.calls: list[dict[str, Any]] = []
 
     def complete(
-        self, *, system: str, messages: Sequence[Message], tools: list[dict[str, Any]]
+        self,
+        *,
+        system: str,
+        messages: Sequence[Message],
+        tools: list[dict[str, Any]],
+        allow_tools: bool,
     ) -> Message:
-        self.calls.append({"system": system, "messages": list(messages), "tools": tools})
+        self.calls.append(
+            {
+                "system": system,
+                "messages": list(messages),
+                "tools": tools,
+                "allow_tools": allow_tools,
+            }
+        )
         step = self._script.pop(0)
 
         if isinstance(step, Exception):
@@ -37,7 +49,7 @@ def _say(text: str) -> Message:
 
 
 def _agent(dataset: Dataset, llm: ScriptedLlm) -> Agent:
-    return Agent(llm, build_registry(dataset), dataset.settings)
+    return build_agent(llm, dataset)
 
 
 def _score_text(dataset: Dataset, code: str) -> str:
@@ -256,8 +268,9 @@ def test_after_the_last_tool_round_the_model_gets_no_tools_and_must_answer(
     answer = _agent(dataset, llm).ask("How strong is BOS?")
 
     assert answer.status is Status.ANSWERED
-    assert llm.calls[rounds - 1]["tools"] != []
-    assert llm.calls[rounds]["tools"] == []
+    assert llm.calls[rounds - 1]["allow_tools"] is True
+    assert llm.calls[rounds]["allow_tools"] is False
+    assert llm.calls[rounds]["tools"] != []  # the history holds tool calls, so the list stays
 
 
 def test_two_tool_calls_in_one_reply_each_get_their_own_output(dataset: Dataset) -> None:
@@ -345,3 +358,44 @@ def test_the_follow_up_note_survives_a_turn_without_data(dataset: Dataset) -> No
     agent.ask("and BOS?")
 
     assert "airports SFO" in llm.calls[-1]["system"]
+
+
+def test_after_a_refusal_the_tool_results_and_options_stay_visible(dataset: Dataset) -> None:
+    llm = ScriptedLlm(
+        _call("airport_score", airport="Portland"),
+        _say("Portland is at 99.9."),
+        _say("Portland is at 98.8."),
+        _say("Which one: PDX or PWM?"),
+    )
+    agent = _agent(dataset, llm)
+
+    refused = agent.ask("How is Portland doing?")
+    agent.ask("the first one")
+    seen = llm.calls[-1]["messages"]
+
+    assert refused.status is Status.ABSTAINED
+    assert any(o.content for m in seen for o in m.tool_outputs)
+    assert "ambiguous_airport" in " ".join(o.content for m in seen for o in m.tool_outputs)
+    assert "99.9" not in " ".join(m.text for m in seen)
+
+
+def test_a_call_that_was_never_run_is_not_left_in_the_history(dataset: Dataset) -> None:
+    rounds = dataset.settings.max_tool_rounds
+    llm = ScriptedLlm(*[_call("airport_score", airport="BOS")] * (rounds + 1), _say("Hello."))
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is BOS?")
+    agent.ask("hi")
+    seen = llm.calls[-1]["messages"]
+
+    assert all(not m.tool_calls or seen[i + 1].tool_outputs for i, m in enumerate(seen[:-1]))
+    assert not seen[-2].tool_calls
+
+
+def test_the_agent_built_for_users_checks_city_names(dataset: Dataset) -> None:
+    llm = ScriptedLlm(_say("Boston has strong demand."), _say("Boston has strong demand."))
+
+    answer = build_agent(llm, dataset).ask("hi")
+
+    assert answer.status is not Status.ANSWERED
+    assert "boston" in answer.problems

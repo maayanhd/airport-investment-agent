@@ -5,7 +5,7 @@ patterns do not recognise is not checked; the module docstring of `validator` li
 """
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 
 from airport_agent.evidence import Evidence
 from airport_agent.numbers import Figure
@@ -74,21 +74,30 @@ def _claimed_ranks(sentence: str) -> Iterator[int]:
         yield int(match[1])
 
 
-def _rank_problems(sentence: str, codes: list[str], ranks: Mapping[str, int]) -> Iterator[str]:
-    """A rank claim in a sentence about one ranked airport must match the tool's rank."""
-    ranked = [c for c in codes if c in ranks]
-
-    if len(ranked) != 1 or len(set(codes)) != 1:
+def _rank_problems(
+    sentence: str, codes: list[str], rankings: Sequence[Mapping[str, int]]
+) -> Iterator[str]:
+    """A rank claim in a sentence about one airport must match a rank a tool gave it."""
+    if len(set(codes)) != 1:
         return
 
-    code = ranked[0]
+    code = codes[0]
+    possible = {ranking[code] for ranking in rankings if code in ranking}
+
+    if not possible:
+        return
 
     for claimed in _claimed_ranks(sentence):
-        if claimed != ranks[code]:
+        if claimed not in possible:
             yield f"{code} ranked {claimed}"
 
-    if TOP_CLAIM.search(sentence) and ranks[code] != 1:
+    if TOP_CLAIM.search(sentence) and 1 not in possible:
         yield f"{code} called the strongest"
+
+
+def _ahead_in_rankings(first: str, second: str, rankings: Sequence[Mapping[str, int]]) -> set[bool]:
+    """Whether `first` is ahead of `second`, in each ranking that has both."""
+    return {r[first] < r[second] for r in rankings if first in r and second in r}
 
 
 def _middle_direction(middle: str, *, delay_topic: bool) -> int:
@@ -120,22 +129,18 @@ def _than_problem(match: re.Match[str], evidence: Evidence) -> str | None:
 
         return None if not known or order in known else match.group(0)
 
-    if RANK_TOPIC.search(middle) and first in evidence.ranks and second in evidence.ranks:
-        is_ahead = evidence.ranks[first] < evidence.ranks[second]
+    if RANK_TOPIC.search(middle):
+        verdicts = _ahead_in_rankings(first, second, evidence.rankings)
 
-        return None if is_ahead == (direction > 0) else match.group(0)
+        return None if not verdicts or (direction > 0) in verdicts else match.group(0)
 
     return None
 
 
 def _outranks_problem(match: re.Match[str], evidence: Evidence) -> str | None:
-    first, second = match["first"], match["second"]
-    ranks = evidence.ranks
+    verdicts = _ahead_in_rankings(match["first"], match["second"], evidence.rankings)
 
-    if first not in ranks or second not in ranks or ranks[first] < ranks[second]:
-        return None
-
-    return match.group(0)
+    return None if not verdicts or True in verdicts else match.group(0)
 
 
 def comparison_problems(sentence: str, evidence: Evidence) -> list[str]:
@@ -147,6 +152,6 @@ def comparison_problems(sentence: str, evidence: Evidence) -> list[str]:
 
 
 def claim_problems(sentence: str, codes: list[str], evidence: Evidence) -> list[str]:
-    ranks = _rank_problems(sentence, codes, evidence.ranks)
+    ranks = _rank_problems(sentence, codes, evidence.rankings)
 
     return [*ranks, *comparison_problems(sentence, evidence)]

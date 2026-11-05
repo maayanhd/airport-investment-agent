@@ -5,7 +5,6 @@ from collections.abc import Iterable, Iterator, Sequence
 from airport_agent.evidence import owner_of
 from airport_agent.tools.result import ToolResult
 
-MAX_LINES = 40
 HIDDEN_KEYS = {"iata"}  # the airport's code is the label of its rows instead
 
 
@@ -26,19 +25,19 @@ def _lines(node: object, label: str) -> Iterator[str]:
         yield f"{label}: {node}"
 
 
-def _capped(lines: Iterable[str]) -> list[str]:
+def _capped(lines: Iterable[str], max_lines: int) -> list[str]:
     everything = list(lines)
 
-    if len(everything) <= MAX_LINES:
+    if len(everything) <= max_lines:
         return everything
 
-    omitted = len(everything) - MAX_LINES
+    omitted = len(everything) - max_lines
 
-    return [*everything[:MAX_LINES], f"... {omitted} more values not shown"]
+    return [*everything[:max_lines], f"... {omitted} more values not shown"]
 
 
-def figures_text(results: Sequence[ToolResult]) -> str:
+def figures_text(results: Sequence[ToolResult], max_lines: int) -> str:
     """One line per value, labelled by tool and field, exactly as the tool gave it."""
     lines = [line for r in results if r.ok for line in _lines(r.data, r.tool)]
 
-    return "\n".join(f"- {line}" for line in _capped(lines))
+    return "\n".join(f"- {line}" for line in _capped(lines, max_lines))

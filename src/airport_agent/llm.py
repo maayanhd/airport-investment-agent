@@ -37,6 +37,9 @@ class LlmClient(Protocol):
         system: str,
         messages: Sequence[Message],
         tools: list[dict[str, Any]],  # JSON schemas
+        allow_tools: bool,
     ) -> Message:
-        """The next assistant message. Raises LlmError when there is none."""
+        """The next assistant message. Raises LlmError when there is none.
+        With `allow_tools` False the model must answer in text; `tools` is still passed because the
+        history holds tool calls (a real client sends tool_choice "none")."""
         ...
