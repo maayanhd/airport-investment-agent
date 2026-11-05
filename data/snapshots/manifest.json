@@ -13,8 +13,8 @@
   },
   "ourairports_airports.json": {
     "source": "OurAirports",
-    "fetched_at": "2026-11-05T09:20:16.206485Z",
+    "fetched_at": "2026-11-05T09:28:48.891285Z",
     "as_of": "2026-11",
-    "sha256": "988aba733ac0fadcf2ec4d6851f405e1eb541676fa7f55db846be98f805ccb90"
+    "sha256": "8adeb30eb83e9a656e6afe23c40d303cc08d49d2e022d9b0177d31529241d3f3"
   }
 }

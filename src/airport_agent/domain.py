@@ -5,11 +5,12 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 IATA_PATTERN = r"[A-Z]{3}"
 STATE_PATTERN = r"[A-Z]{2}"
 MAX_NAME_CHARS = 80
+DASHES = dict.fromkeys(range(0x2010, 0x2016), "-")  # hyphen, en dash, em dash and friends
 
 
 def search_words(text: str) -> list[str]:
@@ -50,17 +51,19 @@ class Airport(BaseModel):
     @field_validator("name", "city")
     @classmethod
     def _plain_text(cls, text: str) -> str:
-        """Drop markup-like characters and cap the length. Words survive, so this does not stop
-        text that reads like an instruction; tool output is treated as data, never as orders."""
-        return " ".join(re.sub(r"[^\w\s.,'&()/-]", "", text).split())[:MAX_NAME_CHARS]
+        """Turn markup-like characters into spaces and cap the length. Words survive, so this does
+        not stop text that reads like an instruction; tool output is data, never orders."""
+        plain = re.sub(r"[^\w\s.,'&()/-]", " ", text.translate(DASHES))
 
-    @field_validator("name")
+        return " ".join(plain.split())[:MAX_NAME_CHARS]
+
+    @field_validator("name", "city")
     @classmethod
-    def _name_not_empty(cls, name: str) -> str:
-        if not name:
-            raise ValueError("airport name is empty after cleaning")
+    def _not_empty(cls, text: str, info: ValidationInfo) -> str:
+        if not text:
+            raise ValueError(f"airport {info.field_name} is empty after cleaning")
 
-        return name
+        return text
 
 
 class MonthlyTraffic(BaseModel):

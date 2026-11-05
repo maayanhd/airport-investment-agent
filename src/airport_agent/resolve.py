@@ -42,11 +42,20 @@ def _read_as(
     return Resolution(Match.RESOLVED, code, tuple(others), note)
 
 
+def _has_words(airport: Airport, words: list[str]) -> bool:
+    return set(words) <= set(search_words(airport.name)) | set(search_words(airport.city))
+
+
 def _by_city(
-    query: str, words: list[str], catalog: OurAirportsCatalog, volume: Mapping[str, int]
+    query: str,
+    words: list[str],
+    catalog: OurAirportsCatalog,
+    volume: Mapping[str, int],
+    max_candidates: int,
 ) -> Resolution | None:
-    """Airports in the city the user named. Several in one city: the busiest is the default."""
-    group = [a for a in catalog.all() if set(search_words(a.city)) == set(words)]
+    """Airports in the city the user named. Several in one city: the busiest is the default.
+    Airports elsewhere whose name has the same words ("Manchester-Boston") are offered too."""
+    group = [a for a in catalog.all() if search_words(a.city) == words]
 
     if not group:
         return None
@@ -55,8 +64,10 @@ def _by_city(
         return _ask(query, group)
 
     ranked = sorted(group, key=lambda a: (-volume.get(a.iata, 0), a.iata))
+    named = [a.iata for a in catalog.all() if a not in group and _has_words(a, words)]
+    others = [a.iata for a in ranked[1:]] + named[:max_candidates]
 
-    return _read_as(query, ranked[0].iata, [a.iata for a in ranked[1:]], catalog)
+    return _read_as(query, ranked[0].iata, others, catalog)
 
 
 def _ask(query: str, airports: Sequence[Airport]) -> Resolution:
@@ -70,11 +81,7 @@ def _ask(query: str, airports: Sequence[Airport]) -> Resolution:
 def _by_name(
     query: str, words: list[str], catalog: OurAirportsCatalog, max_candidates: int
 ) -> Resolution:
-    hits = [
-        a
-        for a in catalog.all()
-        if set(words) <= set(search_words(a.name)) | set(search_words(a.city))
-    ]
+    hits = [a for a in catalog.all() if _has_words(a, words)]
 
     if len(hits) > max_candidates:
         note = f'"{query}" matches {len(hits)} airports: give a city, a state or an airport code'
@@ -111,14 +118,16 @@ def resolve_airport(
 
         return _read_as(query, codes[0], codes[1:], catalog)
 
-    if CODE.fullmatch(" ".join(words)):
-        code = " ".join(words).upper()
+    text = " ".join(words)
+
+    if CODE.fullmatch(text):
+        code = text.upper()
 
         if catalog.get(code):
             return Resolution(Match.RESOLVED, code, (), "")
 
         return Resolution(Match.NOT_COVERED, None, (), f"{code} is not in my coverage list")
 
-    return _by_city(query, words, catalog, volume) or _by_name(
+    return _by_city(query, words, catalog, volume, max_candidates) or _by_name(
         query, words, catalog, max_candidates
     )

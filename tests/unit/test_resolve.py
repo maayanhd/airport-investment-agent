@@ -59,7 +59,6 @@ def test_metro_names_come_from_the_alias_table(
         ("Santa Ana", "SNA"),
         ("burbank", "BUR"),
         ("Anchorage", "ANC"),
-        ("Boston", "BOS"),
         ("Manchester", "MHT"),
         ("Providence", "PVD"),
         ("Boston Logan", "BOS"),
@@ -78,7 +77,7 @@ def test_a_city_or_name_in_the_data_needs_no_alias(dataset: Dataset, query: str,
 def test_the_busiest_airport_is_the_default_inside_one_city(
     dataset: Dataset, query: str, code: str, other: str
 ) -> None:
-    found = _resolve(dataset, query)
+    found = _resolve(dataset, query, volume={code: 100, other: 10})
 
     assert (found.status, found.code, found.alternatives) == (Match.RESOLVED, code, (other,))
     assert f"other readings: {other}" in found.note
@@ -150,3 +149,19 @@ def test_a_vague_name_asks_for_something_clearer(dataset: Dataset, query: str) -
 @pytest.mark.parametrize("query", ["L.A.", "l a", "Los-Angeles", "N.Y.C."])
 def test_punctuation_and_spacing_do_not_hide_an_alias(dataset: Dataset, query: str) -> None:
     assert _resolve(dataset, query).status is Match.RESOLVED
+
+
+def test_a_name_hit_in_another_city_is_offered_as_an_alternative(dataset: Dataset) -> None:
+    found = _resolve(dataset, "Boston")
+
+    assert (found.status, found.code, found.alternatives) == (Match.RESOLVED, "BOS", ("MHT",))
+
+
+def test_city_words_must_come_in_order(dataset: Dataset) -> None:
+    found = _resolve(dataset, "york new")
+
+    assert found.status is not Match.RESOLVED
+
+
+def test_a_word_from_the_name_after_a_dash_finds_the_airport(dataset: Dataset) -> None:
+    assert _resolve(dataset, "Tacoma").code == "SEA"
