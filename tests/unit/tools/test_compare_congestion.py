@@ -18,7 +18,7 @@ def test_the_airport_with_the_higher_delay_rate_is_named(dataset: Dataset) -> No
     assert result.ok
     assert result.data["more_delayed"] == "SFO"
     assert rows["SFO"]["delay_rate"]["value"] > rows["ANC"]["delay_rate"]["value"]
-    assert rows["SFO"]["delay_rate"]["shown"] == "25.3%"
+    assert rows["SFO"]["delay_rate"]["shown"] == f"{rows['SFO']['delay_rate']['value']:.1%}"
 
 
 def test_the_answer_does_not_depend_on_the_order(dataset: Dataset) -> None:
@@ -58,3 +58,28 @@ def test_an_airport_without_delay_data_is_named_in_the_failure(dataset: Dataset)
     assert result.error.kind is ErrorKind.INSUFFICIENT_DATA
     assert "SFO" in result.error.message
     assert "ANC" in result.error.message
+
+
+def test_the_gap_is_the_difference_of_the_numbers_shown(dataset: Dataset) -> None:
+    result = _compare(dataset, "SFO", "ANC")
+    a, b = (row["delay_rate"]["value"] for row in result.data["airports"])
+
+    assert result.data["delay_rate_gap"]["value"] == round(abs(a - b), 4)
+
+
+def test_different_delay_windows_are_called_out(dataset: Dataset) -> None:
+    assert dataset.delays is not None
+    series = {c: dataset.delays.series(c) for c in dataset.settings.coverage_airports}
+    series["ANC"] = series["ANC"][-9:]
+    shorter = History(series, dataset.delays.provenance, series, min_months=9)
+    result = _compare(dataclasses.replace(dataset, delays=shorter), "SFO", "ANC")
+    row = {r["airport"]["iata"]: r["delay_months"] for r in result.data["airports"]}
+
+    assert row == {"SFO": 12, "ANC": 9}
+    assert any("different numbers of delay months (SFO 12, ANC 9)" in c for c in result.caveats)
+
+
+def test_equal_windows_need_no_caveat(dataset: Dataset) -> None:
+    caveats = " ".join(_compare(dataset, "SFO", "ANC").caveats)
+
+    assert "different numbers of delay months" not in caveats

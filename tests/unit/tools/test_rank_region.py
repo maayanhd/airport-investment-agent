@@ -68,3 +68,22 @@ def test_a_region_with_no_scores_fails_with_insufficient_data(dataset: Dataset) 
 
     assert result.error is not None
     assert result.error.kind is ErrorKind.INSUFFICIENT_DATA
+
+
+def test_a_strong_partial_score_below_the_cut_is_named(dataset: Dataset) -> None:
+    result = _rank(dataset, "New England", top_n=5)
+
+    assert any("HVN" in line and "not shown" in line for line in result.caveats)
+    assert any("ranked before airports with partial data" in a for a in result.assumptions)
+
+
+def test_nothing_is_reported_missing_when_every_partial_airport_is_shown(dataset: Dataset) -> None:
+    result = _rank(dataset, "New England", top_n=20)
+
+    assert not any("not shown" in line for line in result.caveats)
+
+
+def test_a_state_code_that_is_also_a_nickname_points_to_the_airport_names(dataset: Dataset) -> None:
+    result = _rank(dataset, "LA")
+
+    assert "name its airports instead" in result.assumptions[0]

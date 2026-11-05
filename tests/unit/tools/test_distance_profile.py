@@ -46,3 +46,9 @@ def test_an_airport_without_enough_traffic_months_fails_with_insufficient_data(
 
     assert result.error is not None
     assert result.error.kind is ErrorKind.INSUFFICIENT_DATA
+
+
+def test_the_flag_agrees_with_the_rounded_average_shown(dataset: Dataset) -> None:
+    data = _profile(dataset, "ANC").data
+
+    assert data["above_threshold"] == (data["avg_distance"]["value"] >= 1500)

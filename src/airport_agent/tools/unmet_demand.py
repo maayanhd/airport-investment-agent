@@ -2,8 +2,11 @@ from pydantic import BaseModel, Field
 
 from airport_agent.dataset import Dataset
 from airport_agent.display import FORMATS, LABELS, growth
+from airport_agent.kpis import AirportKpis
+from airport_agent.scoring import AirportScore, Component
 from airport_agent.tools.common import (
     PROXY_CAVEAT,
+    RATIO_DIGITS,
     Resolved,
     airport_ref,
     data_caveats,
@@ -26,6 +29,16 @@ class UnmetDemandArgs(BaseModel):
     airport: str = Field(
         min_length=1, max_length=60, description="An airport code such as SFO, or a city."
     )
+
+
+def _signal(component: Component, threshold: float) -> dict[str, object]:
+    return {
+        "name": component.name,
+        "label": LABELS[component.name],
+        "value": round(component.value, RATIO_DIGITS),
+        "shown": FORMATS[component.name](component.value),
+        "strong": component.scaled >= threshold,
+    }
 
 
 class UnmetDemandTool:
@@ -52,18 +65,11 @@ class UnmetDemandTool:
         if result.score is None:
             return ToolResult.failure(self.name, ErrorKind.INSUFFICIENT_DATA, result.reason)
 
+        return self._result(resolved, kpis, result)
+
+    def _result(self, resolved: Resolved, kpis: AirportKpis, result: AirportScore) -> ToolResult:
         threshold = self._data.settings.strong_signal_scaled
-        signals = [
-            {
-                "name": c.name,
-                "label": LABELS[c.name],
-                "value": round(c.value, 4),
-                "shown": FORMATS[c.name](c.value),
-                "strong": c.scaled >= threshold,
-            }
-            for c in result.components
-        ]
-        strong = sum(bool(s["strong"]) for s in signals)
+        signals = [_signal(c, threshold) for c in result.components]
 
         return ToolResult(
             tool=self.name,
@@ -71,7 +77,7 @@ class UnmetDemandTool:
             data={
                 "airport": airport_ref(self._data, resolved.code),
                 "signals": signals,
-                "strong_signals": strong,
+                "strong_signals": sum(bool(s["strong"]) for s in signals),
                 "total_signals": len(signals),
                 "missing": list(result.missing),
                 "seat_growth": metric(kpis.seat_growth, growth),

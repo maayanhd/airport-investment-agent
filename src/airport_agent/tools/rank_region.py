@@ -6,7 +6,7 @@ from airport_agent.config import Settings
 from airport_agent.dataset import Dataset
 from airport_agent.display import describe_scoring
 from airport_agent.domain import STATE_PATTERN, search_words
-from airport_agent.scoring import rank
+from airport_agent.scoring import AirportScore, rank
 from airport_agent.tools.common import (
     PROXY_CAVEAT,
     airport_ref,
@@ -36,6 +36,42 @@ def _states(settings: Settings, region: str) -> list[str] | None:
     code = region.strip().upper()
 
     return [code] if re.fullmatch(STATE_PATTERN, code) else None
+
+
+ORDER_RULE = (
+    "Airports with every score component are ranked before airports with partial data, even when "
+    "a partial score is higher, because a missing component changes what the score means."
+)
+
+
+def _row(data: Dataset, position: int, score: AirportScore) -> dict[str, object]:
+    return {
+        "rank": position,
+        "airport": airport_ref(data, score.iata),
+        "score": round(score.score or 0.0, 1),
+        "confidence": round(score.confidence, 2),
+        "complete": not score.missing,
+    }
+
+
+def _omitted_partial(data: Dataset, hidden: list[AirportScore]) -> list[str]:
+    """Partial scores that fell below the cut, so a strong candidate is not dropped silently."""
+    return [
+        f"{s.iata} (score {s.score:.1f}, confidence {s.confidence:.0%}) is not shown: it has "
+        "partial data and is ranked after every complete score."
+        for s in hidden
+        if s.missing
+    ]
+
+
+def _assumptions(data: Dataset, region: str, states: list[str]) -> list[str]:
+    reading = f"Region {region!r} is the states {', '.join(states)}."
+    aliases = data.settings.airport_aliases
+
+    if " ".join(search_words(region)) in aliases:
+        reading += f" For the metro area {region!r}, name its airports instead."
+
+    return [reading, ORDER_RULE, *describe_scoring(data.settings)]
 
 
 class RankRegionTool:
@@ -76,35 +112,35 @@ class RankRegionTool:
 
             return ToolResult.failure(self.name, ErrorKind.INSUFFICIENT_DATA, message)
 
-        data = {
-            "region": args.region,
-            "states": states,
-            "covered_airports": len(airports),
-            "ranking": [
-                {
-                    "rank": position,
-                    "airport": airport_ref(self._data, s.iata),
-                    "score": round(s.score or 0.0, 1),
-                    "confidence": round(s.confidence, 2),
-                    "complete": not s.missing,
-                }
-                for position, s in enumerate(scored[: args.top_n], start=1)
-            ],
-            "not_scored": [{"iata": s.iata, "reason": s.reason} for s in scores if s.score is None],
-        }
-        partial = [s for s in scored[: args.top_n] if s.missing]
+        return self._result(args, states, scores, scored)
+
+    def _result(
+        self,
+        args: RankArgs,
+        states: list[str],
+        scores: list[AirportScore],
+        scored: list[AirportScore],
+    ) -> ToolResult:
+        shown = scored[: args.top_n]
+        partial = (c for s in shown if s.missing for c in partial_caveat(s, s.iata, self._data))
 
         return ToolResult(
             tool=self.name,
             ok=True,
-            data=data,
-            assumptions=[
-                f"Region {args.region!r} is the states {', '.join(states)}.",
-                *describe_scoring(self._data.settings),
-            ],
+            data={
+                "region": args.region,
+                "states": states,
+                "covered_airports": len(scores),
+                "ranking": [_row(self._data, n, s) for n, s in enumerate(shown, start=1)],
+                "not_scored": [
+                    {"iata": s.iata, "reason": s.reason} for s in scores if s.score is None
+                ],
+            },
+            assumptions=_assumptions(self._data, args.region, states),
             caveats=[
                 PROXY_CAVEAT,
-                *(c for s in partial for c in partial_caveat(s, s.iata, self._data)),
+                *partial,
+                *_omitted_partial(self._data, scored[args.top_n :]),
                 *data_caveats(self._data),
             ],
             sources=self._data.sources(),

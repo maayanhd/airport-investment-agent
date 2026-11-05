@@ -10,6 +10,7 @@ from airport_agent.resolve import Match, resolve_airport
 from airport_agent.scoring import AirportScore, score_airport
 from airport_agent.tools.result import ErrorKind, ToolResult
 
+RATIO_DIGITS = 4  # decimals kept for fractions such as 0.2531
 PROXY_CAVEAT = (
     "Delay pressure is a congestion proxy (share of operated flights 15+ minutes late, "
     "reporting carriers only), not a measurement of capacity or unmet demand."
@@ -106,7 +107,7 @@ def month(value: date | None) -> str | None:
 
 
 def metric(
-    value: float | None, show: Callable[[float], str], digits: int = 4
+    value: float | None, show: Callable[[float], str], digits: int = RATIO_DIGITS
 ) -> dict[str, object] | None:
     """The number rounded once plus the text to quote, so the answer can match it exactly."""
     return None if value is None else {"value": round(value, digits), "shown": show(value)}

@@ -59,7 +59,7 @@ class DistanceProfileTool:
                 "airport": airport_ref(self._data, resolved.code),
                 "avg_distance": metric(average, miles, digits=0),
                 "long_haul_threshold": metric(threshold, miles, digits=0),
-                "above_threshold": average >= threshold,
+                "above_threshold": round(average) >= threshold,
                 "traffic_through": month(kpis.traffic_through),
             },
             assumptions=[

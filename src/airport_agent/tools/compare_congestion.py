@@ -2,9 +2,10 @@ from pydantic import BaseModel, Field
 
 from airport_agent.dataset import Dataset
 from airport_agent.display import load_percent, minutes, percent, points
-from airport_agent.kpis import AirportKpis
+from airport_agent.kpis import YEAR, AirportKpis
 from airport_agent.tools.common import (
     PROXY_CAVEAT,
+    RATIO_DIGITS,
     Resolved,
     airport_ref,
     data_caveats,
@@ -26,6 +27,21 @@ class CompareArgs(BaseModel):
     airport_b: str = Field(min_length=1, max_length=60, description="Second airport or city.")
 
 
+def _months(data: Dataset, code: str) -> int:
+    return min(len(data.delays.series(code)), YEAR) if data.delays else 0
+
+
+def _window_caveat(data: Dataset, resolved: list[Resolved]) -> list[str]:
+    months = {r.code: _months(data, r.code) for r in resolved}
+
+    if len(set(months.values())) == 1:
+        return []
+
+    used = ", ".join(f"{code} {count}" for code, count in months.items())
+
+    return [f"The airports have different numbers of delay months ({used}), so seasons differ."]
+
+
 def _row(data: Dataset, code: str, kpis: AirportKpis) -> dict[str, object]:
     return {
         "airport": airport_ref(data, code),
@@ -33,6 +49,7 @@ def _row(data: Dataset, code: str, kpis: AirportKpis) -> dict[str, object]:
         "cancel_rate": metric(kpis.cancel_rate, percent),
         "avg_delay_minutes": metric(kpis.avg_delay_minutes, minutes, digits=1),
         "load_factor": metric(kpis.load_factor, load_percent, digits=1),
+        "delay_months": _months(data, code),
         "delays_through": month(kpis.delays_through),
     }
 
@@ -73,8 +90,8 @@ class CompareCongestionTool:
         return self._result(resolved, kpis)
 
     def _result(self, resolved: list[Resolved], kpis: list[AirportKpis]) -> ToolResult:
-        rates = [k.delay_rate or 0.0 for k in kpis]
-        gap = abs(rates[0] - rates[1])
+        rates = [round(k.delay_rate or 0.0, RATIO_DIGITS) for k in kpis]
+        gap = round(abs(rates[0] - rates[1]), RATIO_DIGITS)
         worse = None if gap == 0 else resolved[rates.index(max(rates))].code
 
         return ToolResult(
@@ -90,8 +107,13 @@ class CompareCongestionTool:
             assumptions=[
                 *(a for r in resolved for a in r.assumptions),
                 "Congestion is measured by the share of operated flights departing 15+ minutes "
-                "late over the last 12 months; load factor is shown as context only.",
+                "late over each airport's newest months, up to 12; load factor is context only.",
             ],
-            caveats=[PROXY_CAVEAT, NOT_ONLY_CONGESTION, *data_caveats(self._data)],
+            caveats=[
+                PROXY_CAVEAT,
+                NOT_ONLY_CONGESTION,
+                *_window_caveat(self._data, resolved),
+                *data_caveats(self._data),
+            ],
             sources=self._data.sources(),
         )
