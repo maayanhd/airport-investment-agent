@@ -1,21 +1,27 @@
 """Command line to inspect and refresh the data layer without starting the agent."""
 
 import argparse
+import json
 from collections.abc import Callable, Sequence
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, Protocol
 
 from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
+from airport_agent.data.catalog import refresh_catalog
 from airport_agent.data.delays import DelayHistory, load_delays, refresh_delays
 from airport_agent.data.history import History, data_age_months
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import load_traffic
-from airport_agent.domain import DataMode
+from airport_agent.dataset import load_dataset
+from airport_agent.display import FORMATS
+from airport_agent.domain import DataMode, Provenance
 from airport_agent.kpis import AirportKpis, compute_kpis
 from airport_agent.scoring import AirportScore, score_airport
+from airport_agent.tools import build_registry, tool_definitions
 
 ROOT = DEFAULT_CONFIG_PATH.parent
 SHOWN_MONTHS = 6
@@ -50,13 +56,23 @@ def _status(store: SnapshotStore, settings: Settings) -> int:
 class RefreshSource(StrEnum):
     TRAFFIC = "traffic"
     DELAYS = "delays"
+    CATALOG = "catalog"
 
 
-REFRESHERS: dict[
-    RefreshSource, Callable[[DataProvider, HttpFetcher, Settings], History[object]]
-] = {
+class Refreshed(Protocol):
+    provenance: Provenance
+    missing_codes: list[str]
+
+
+REFRESHERS: dict[RefreshSource, Callable[[DataProvider, HttpFetcher, Settings], Refreshed]] = {
     RefreshSource.TRAFFIC: load_traffic,
     RefreshSource.DELAYS: refresh_delays,
+    RefreshSource.CATALOG: lambda provider, fetcher, settings: refresh_catalog(
+        provider,
+        fetcher,
+        settings.coverage_airports,
+        min_airport_share=settings.min_airport_share,
+    ),
 }
 
 
@@ -80,7 +96,7 @@ def _refresh(which: RefreshSource, settings: Settings, store: SnapshotStore) -> 
 
         return 1
 
-    print(f"saved {source.source} | data month {source.as_of}")
+    print(f"saved {source.source} | data month {source.as_of or 'n/a'}")
     print(f"airports with data: {len(settings.coverage_airports) - len(history.missing_codes)}")
 
     if history.missing_codes:
@@ -181,14 +197,6 @@ def _show(code: str, settings: Settings, store: SnapshotStore) -> int:
     return status
 
 
-SHOWN_VALUE = {
-    "passenger_growth": lambda v: f"{v:+.1%}",
-    "load_factor": lambda v: f"{v:.1f}%",
-    "delay_pressure": lambda v: f"{v:.1%} late 15+ min",
-    "capacity_gap": lambda v: f"{100 * v:+.1f} pts",
-}
-
-
 def _print_score(result: AirportScore, through: str) -> None:
     shown = "no score" if result.score is None else f"score {result.score:.1f} / 100"
     print(f"{result.iata} | {shown} | confidence {result.confidence:.0%} | {through}")
@@ -197,7 +205,7 @@ def _print_score(result: AirportScore, through: str) -> None:
         print(f"  no score: {result.reason}")
 
     for c in result.components:
-        value = SHOWN_VALUE[c.name](c.value)
+        value = FORMATS[c.name](c.value)
         print(
             f"  {c.name:<17} {value:<19} scaled {c.scaled:.2f} x {c.weight:.2f} = {c.points:5.1f}"
         )
@@ -278,12 +286,57 @@ def _score(codes: Sequence[str], settings: Settings, store: SnapshotStore) -> in
     return 0
 
 
+def _json_object(text: str) -> dict[str, Any] | None:
+    """The arguments as a dict, or None after printing why they are unusable."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as error:
+        print(f"arguments must be JSON: {error}")
+
+        return None
+
+    if not isinstance(parsed, dict):
+        print('arguments must be a JSON object, for example {"airport": "BOS"}')
+
+        return None
+
+    return parsed
+
+
+def _tool(name: str | None, arguments: str, settings: Settings, store: SnapshotStore) -> int:
+    if name is None:
+        for definition in tool_definitions():
+            print(f"{definition['name']}: {definition['description']}")
+
+        return 0
+
+    parsed = _json_object(arguments)
+
+    if parsed is None:
+        return 2
+
+    try:
+        data = load_dataset(settings, store, HttpFetcher())
+    except DataUnavailableError as error:
+        print(error)
+
+        return 1
+
+    result = build_registry(data).call(name, parsed)
+    print(result.model_dump_json(indent=2))
+
+    return 0 if result.ok else 1
+
+
 def main(
     argv: Sequence[str] | None = None, *, root: Path = ROOT, settings: Settings | None = None
 ) -> int:
     parser = argparse.ArgumentParser(prog="airport-agent")
     top = parser.add_subparsers(dest="command", required=True)
     commands = top.add_parser("data").add_subparsers(dest="action", required=True)
+    tool = top.add_parser("tool", help="run one tool the way the agent would, or list them")
+    tool.add_argument("name", nargs="?")
+    tool.add_argument("arguments", nargs="?", default="{}", help='JSON, e.g. \'{"airport": "LA"}\'')
     top.add_parser("score", help="expansion score and its components").add_argument(
         "airports", nargs="+"
     )
@@ -299,6 +352,9 @@ def main(
 
     settings = settings or load_settings()
     store = SnapshotStore(root / settings.snapshot_dir)
+
+    if args.command == "tool":
+        return _tool(args.name, args.arguments, settings, store)
 
     if args.command == "score":
         return _score(args.airports, settings, store)

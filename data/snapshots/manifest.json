@@ -10,5 +10,11 @@
     "fetched_at": "2026-11-04T22:09:12.880190Z",
     "as_of": "2026-07",
     "sha256": "cae78d761fa4211ca25917cc3eea340cdcb5ed68f1aa6ac6f65f2a4befa47f47"
+  },
+  "ourairports_airports.json": {
+    "source": "OurAirports",
+    "fetched_at": "2026-11-04T23:55:38.220357Z",
+    "as_of": "2026-11",
+    "sha256": "6f504035edbff1c6ad6122bdbaef7994e8810c67aea65c51ccf913744ae94ad5"
   }
 }

@@ -11,13 +11,13 @@ import pytest
 import respx
 
 from airport_agent import cli
-from airport_agent.cli import SHOWN_VALUE, main
+from airport_agent.cli import main
 from airport_agent.config import load_settings
 from airport_agent.data.history import History
+from airport_agent.data.http import HttpFetcher
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import BTS_URL, SNAPSHOT_NAME
 from airport_agent.domain import DataMode, Provenance
-from airport_agent.scoring import COMPONENTS
 
 SAMPLE = (Path(__file__).parents[1] / "fixtures" / "bts_t100_sample.json").read_text(
     encoding="utf-8"
@@ -378,5 +378,78 @@ def test_score_lists_a_repeated_airport_once(tmp_path: Path, capsys: Out) -> Non
     assert capsys.readouterr().out.count("ANC | score ") == 1
 
 
-def test_every_score_component_has_a_display_format() -> None:
-    assert SHOWN_VALUE.keys() == COMPONENTS.keys()
+def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The committed snapshots are the data; traffic's live call fails fast and falls back."""
+    monkeypatch.setattr(cli, "HttpFetcher", lambda: HttpFetcher(retries=0, sleep=lambda _: None))
+
+
+def _tool(*argv: str, capsys: Out) -> tuple[int, str]:
+    status = main(["tool", *argv], root=Path(__file__).parents[2], settings=load_settings())
+
+    return status, capsys.readouterr().out
+
+
+def test_tool_without_a_name_lists_the_tools_without_any_data(tmp_path: Path, capsys: Out) -> None:
+    status = main(["tool"], root=tmp_path, settings=load_settings())  # no snapshots here
+
+    assert status == 0
+    assert capsys.readouterr().out.startswith("airport_score: Expansion score")
+
+
+@respx.mock
+def test_tool_runs_like_the_agent_would_and_prints_json(
+    capsys: Out, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx.get(BTS_URL).respond(503)
+    _offline(monkeypatch)
+
+    status, out = _tool("airport_score", '{"airport": "LA"}', capsys=capsys)
+    result = json.loads(out)
+
+    assert status == 0
+    assert result["data"]["airport"]["iata"] == "LAX"
+    assert result["sources"]
+
+
+@respx.mock
+def test_tool_failures_exit_non_zero_with_the_reason(
+    capsys: Out, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx.get(BTS_URL).respond(503)
+    _offline(monkeypatch)
+
+    status, out = _tool("airport_score", '{"airport": "Portland"}', capsys=capsys)
+
+    assert status == 1
+    assert json.loads(out)["error"]["options"] == ["PDX", "PWM"]
+
+    status, out = _tool("nope", capsys=capsys)
+
+    assert (status, json.loads(out)["error"]["kind"]) == (1, "unknown_tool")
+
+
+@respx.mock
+def test_tool_rejects_arguments_that_are_not_json(
+    capsys: Out, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx.get(BTS_URL).respond(503)
+    _offline(monkeypatch)
+
+    status, out = _tool("airport_score", "not json", capsys=capsys)
+
+    assert status == 2
+    assert "arguments must be JSON" in out
+
+
+def test_tool_reports_missing_data_instead_of_crashing(tmp_path: Path, capsys: Out) -> None:
+    assert main(["tool", "airport_score"], root=tmp_path, settings=load_settings()) == 1
+    assert "no valid snapshot" in capsys.readouterr().out
+
+
+@respx.mock
+@pytest.mark.parametrize("arguments", ['"BOS"', "[1, 2]", "not json"])
+def test_tool_rejects_bad_arguments_before_loading_any_data(arguments: str, capsys: Out) -> None:
+    status, out = _tool("airport_score", arguments, capsys=capsys)  # respx fails on any request
+
+    assert status == 2
+    assert "arguments must be" in out
