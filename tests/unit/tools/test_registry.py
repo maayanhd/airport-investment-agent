@@ -56,3 +56,35 @@ def test_bad_arguments_are_returned_as_an_error_not_raised(arguments: dict[str, 
 def test_duplicate_tool_names_are_rejected() -> None:
     with pytest.raises(ValueError, match="duplicate"):
         ToolRegistry([EchoTool(), EchoTool()])
+
+
+class CrashingTool(EchoTool):
+    name = "crash"
+
+    def run(self, args: Any) -> ToolResult:
+        raise KeyError("missing label")
+
+
+def test_a_crash_inside_a_tool_becomes_a_typed_error(caplog: pytest.LogCaptureFixture) -> None:
+    result = ToolRegistry([CrashingTool()]).call("crash", {"text": "hi"})
+
+    assert result.error is not None
+    assert result.error.kind is ErrorKind.INTERNAL_ERROR
+    assert "KeyError" not in result.error.message  # the model never sees the traceback
+    assert "tool crash failed" in caplog.text
+
+
+def test_unknown_arguments_are_rejected_not_dropped() -> None:
+    result = ToolRegistry([EchoTool()]).call("echo", {"text": "hi", "months": 6})
+
+    assert result.error is not None
+    assert result.error.kind is ErrorKind.BAD_ARGUMENTS
+    assert "months" in result.error.message
+    assert "allowed: text" in result.error.message
+
+
+def test_validation_errors_read_as_field_and_problem() -> None:
+    result = ToolRegistry([EchoTool()]).call("echo", {"text": ""})
+
+    assert result.error is not None
+    assert result.error.message.startswith("invalid arguments - text: ")

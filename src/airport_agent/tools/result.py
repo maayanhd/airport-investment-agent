@@ -15,6 +15,7 @@ class ErrorKind(StrEnum):
     AMBIGUOUS_AIRPORT = "ambiguous_airport"
     NOT_COVERED = "not_covered"
     INSUFFICIENT_DATA = "insufficient_data"
+    INTERNAL_ERROR = "internal_error"
 
 
 class ToolError(BaseModel):

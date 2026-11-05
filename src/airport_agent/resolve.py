@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from airport_agent.data.catalog import OurAirportsCatalog
+from airport_agent.domain import search_words
 
 CODE = re.compile(r"[a-z]{3}")
 
@@ -25,8 +26,8 @@ class Resolution:
     note: str  # what to tell the user when we assumed a reading or need to ask
 
 
-def _words(text: str) -> list[str]:
-    return re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+def _squash(text: str) -> str:
+    return "".join(search_words(text))
 
 
 def _alias(query: str, codes: Sequence[str], catalog: OurAirportsCatalog) -> Resolution:
@@ -41,8 +42,15 @@ def _alias(query: str, codes: Sequence[str], catalog: OurAirportsCatalog) -> Res
     return Resolution(Match.RESOLVED, code, others, note)
 
 
-def _by_name(query: str, words: list[str], catalog: OurAirportsCatalog) -> Resolution:
-    hits = sorted(a.iata for a in catalog.all() if set(words) <= set(_words(a.name)))
+def _by_name(
+    query: str, words: list[str], catalog: OurAirportsCatalog, max_candidates: int
+) -> Resolution:
+    hits = sorted(a.iata for a in catalog.all() if set(words) <= set(search_words(a.name)))
+
+    if len(hits) > max_candidates:
+        note = f'"{query}" matches {len(hits)} airports: give a city, a state or an airport code'
+
+        return Resolution(Match.AMBIGUOUS, None, (), note)
 
     if len(hits) == 1:
         airport = catalog.get(hits[0])
@@ -59,16 +67,22 @@ def _by_name(query: str, words: list[str], catalog: OurAirportsCatalog) -> Resol
 
 
 def resolve_airport(
-    query: str, catalog: OurAirportsCatalog, aliases: Mapping[str, Sequence[str]]
+    query: str,
+    catalog: OurAirportsCatalog,
+    aliases: Mapping[str, Sequence[str]],
+    *,
+    max_candidates: int,
 ) -> Resolution:
-    words = _words(query)
+    words = search_words(query)
     text = " ".join(words)
 
     if not words:
         return Resolution(Match.UNKNOWN, None, (), "no airport given")
 
-    if text in aliases:
-        return _alias(query, aliases[text], catalog)
+    by_squashed = {_squash(alias): codes for alias, codes in aliases.items()}
+
+    if _squash(query) in by_squashed:
+        return _alias(query, by_squashed[_squash(query)], catalog)
 
     if CODE.fullmatch(text):
         code = text.upper()
@@ -78,4 +92,4 @@ def resolve_airport(
 
         return Resolution(Match.NOT_COVERED, None, (), f"{code} is not in my coverage list")
 
-    return _by_name(query, words, catalog)
+    return _by_name(query, words, catalog, max_candidates)

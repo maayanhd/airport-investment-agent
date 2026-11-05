@@ -2,7 +2,6 @@
 
 import csv
 import io
-import re
 from collections.abc import Iterable
 from datetime import date
 
@@ -16,16 +15,10 @@ from airport_agent.domain import Airport, Provenance
 OURAIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 SOURCE = "OurAirports"
 SNAPSHOT_NAME = "ourairports_airports.json"
-MAX_NAME_CHARS = 80
 SIZES = {"large_airport": "large", "medium_airport": "medium", "small_airport": "small"}
 REQUIRED_COLUMNS = frozenset(
     {"iata_code", "iso_country", "type", "iso_region", "name", "latitude_deg", "longitude_deg"}
 )
-
-
-def _clean_name(name: str) -> str:
-    """Names come from a third party and reach the model, so keep only plain characters."""
-    return " ".join(re.sub(r"[^\w\s.,'&()/-]", "", name).split())[:MAX_NAME_CHARS]
 
 
 def _to_airport(row: dict[str, str], wanted: set[str]) -> Airport | None:
@@ -36,7 +29,7 @@ def _to_airport(row: dict[str, str], wanted: set[str]) -> Airport | None:
 
     return Airport(
         iata=iata,
-        name=_clean_name(row["name"]),
+        name=row["name"],
         state=row["iso_region"].removeprefix("US-"),
         latitude=float(row["latitude_deg"]),
         longitude=float(row["longitude_deg"]),
@@ -101,13 +94,18 @@ def _to_json(airports: dict[str, Airport]) -> str:
     return _AIRPORTS.dump_json(sorted(airports.values(), key=lambda a: a.iata)).decode()
 
 
-def parse_catalog(text: str, coverage: Iterable[str]) -> dict[str, Airport]:
-    """Raises ValueError, and only ValueError, on unusable content."""
+def parse_catalog(
+    text: str, coverage: Iterable[str], *, min_airport_share: float
+) -> dict[str, Airport]:
+    """Raises ValueError, and only ValueError, on unusable or too-thin content."""
     wanted = {code.upper() for code in coverage}
     airports = {a.iata: a for a in read_rows(_AIRPORTS, text, "OurAirports") if a.iata in wanted}
 
-    if not airports:
-        raise ValueError("no covered airport found in the catalog")
+    if not airports or len(airports) < min_airport_share * len(wanted):
+        raise ValueError(
+            f"OurAirports catalog too thin: {len(airports)} of {len(wanted)} covered airports "
+            f"(need {min_airport_share:.0%})"
+        )
 
     return airports
 
@@ -117,6 +115,7 @@ def refresh_catalog(
     fetcher: HttpFetcher,
     coverage: Iterable[str],
     *,
+    min_airport_share: float,
     today: date | None = None,
 ) -> OurAirportsCatalog:
     """Downloads the 12.7 MB world file and keeps only the covered airports as the snapshot."""
@@ -126,17 +125,21 @@ def refresh_catalog(
         SNAPSHOT_NAME,
         source=SOURCE,
         live=lambda: _to_json(parse_airports(fetcher.get_text(OURAIRPORTS_URL), wanted)),
-        parse=lambda text: parse_catalog(text, wanted),
+        parse=lambda text: parse_catalog(text, wanted, min_airport_share=min_airport_share),
         as_of=lambda _: month,
     )
 
     return OurAirportsCatalog(fetched.value, fetched.provenance, wanted)
 
 
-def load_catalog(provider: DataProvider, coverage: Iterable[str]) -> OurAirportsCatalog:
+def load_catalog(
+    provider: DataProvider, coverage: Iterable[str], *, min_airport_share: float
+) -> OurAirportsCatalog:
     wanted = tuple(coverage)
     fetched = provider.read_snapshot(
-        SNAPSHOT_NAME, source=SOURCE, parse=lambda text: parse_catalog(text, wanted)
+        SNAPSHOT_NAME,
+        source=SOURCE,
+        parse=lambda text: parse_catalog(text, wanted, min_airport_share=min_airport_share),
     )
 
     return OurAirportsCatalog(fetched.value, fetched.provenance, wanted)

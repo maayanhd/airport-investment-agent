@@ -7,7 +7,7 @@ from typing import Self
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from airport_agent.domain import IATA_PATTERN
+from airport_agent.domain import IATA_PATTERN, search_words
 from airport_agent.scoring import COMPONENTS
 
 WEIGHT_TOLERANCE = 1e-9
@@ -31,6 +31,7 @@ class Settings(BaseModel):
     delays_months: int = Field(ge=3)
     delays_min_months: int = Field(ge=3)
     min_airport_share: float = Field(gt=0, le=1)
+    max_name_candidates: int = Field(ge=2)
 
     @field_validator("coverage_airports")
     @classmethod
@@ -52,7 +53,11 @@ class Settings(BaseModel):
     @model_validator(mode="after")
     def _aliases_point_at_covered_airports(self) -> Self:
         for alias, codes in self.airport_aliases.items():
-            if alias != alias.lower() or not codes or set(codes) - set(self.coverage_airports):
+            if (
+                alias != " ".join(search_words(alias))
+                or not codes
+                or set(codes) - set(self.coverage_airports)
+            ):
                 raise ValueError(f"airport_aliases[{alias!r}] must list covered airport codes")
 
         return self

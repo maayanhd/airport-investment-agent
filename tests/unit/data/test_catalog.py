@@ -14,7 +14,7 @@ from airport_agent.data.catalog import (
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.provider import DataProvider, DataUnavailableError
 from airport_agent.data.snapshots import SnapshotStore
-from airport_agent.domain import DataMode
+from airport_agent.domain import Airport, DataMode
 
 SAMPLE = (Path(__file__).parents[2] / "fixtures" / "airports_sample.csv").read_text(
     encoding="utf-8"
@@ -44,12 +44,16 @@ def test_catalog_live_then_snapshot_fallback(tmp_path: Path) -> None:
     fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
     route = respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
 
-    live = refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS", "BDL"])
+    live = refresh_catalog(
+        DataProvider(store), fetcher, ["ANC", "BOS", "BDL"], min_airport_share=0.5
+    )
     assert live.provenance.mode is DataMode.LIVE
     assert [a.iata for a in live.in_states(["MA", "CT"])] == ["BDL", "BOS"]
 
     route.respond(500)
-    offline = refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS", "BDL"])
+    offline = refresh_catalog(
+        DataProvider(store), fetcher, ["ANC", "BOS", "BDL"], min_airport_share=0.5
+    )
     assert offline.provenance.mode is DataMode.SNAPSHOT
     assert offline.get("anc") is not None
     assert offline.get("JFK") is None  # not in coverage
@@ -60,10 +64,10 @@ def test_error_page_with_200_keeps_last_good_snapshot(tmp_path: Path) -> None:
     store = SnapshotStore(tmp_path)
     fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
     route = respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
-    refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+    refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"], min_airport_share=0.5)
 
     route.respond(200, text="<html>Service unavailable</html>")
-    catalog = refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+    catalog = refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"], min_airport_share=0.5)
 
     assert catalog.provenance.mode is DataMode.SNAPSHOT
     assert catalog.get("ANC") is not None
@@ -85,10 +89,10 @@ def test_truncated_live_file_falls_back_to_snapshot(tmp_path: Path) -> None:
     store = SnapshotStore(tmp_path)
     fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
     route = respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
-    refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+    refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"], min_airport_share=0.5)
 
     route.respond(200, text=TRUNCATED)
-    catalog = refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+    catalog = refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"], min_airport_share=0.5)
     assert catalog.provenance.mode is DataMode.SNAPSHOT
     assert "snapshot used" in catalog.provenance.note
     assert catalog.get("BOS") is not None
@@ -98,7 +102,9 @@ def test_truncated_live_file_falls_back_to_snapshot(tmp_path: Path) -> None:
 def test_codes_missing_from_data_are_reported(tmp_path: Path) -> None:
     respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
     fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
-    catalog = refresh_catalog(DataProvider(SnapshotStore(tmp_path)), fetcher, ["ANC", "ZZZ"])
+    catalog = refresh_catalog(
+        DataProvider(SnapshotStore(tmp_path)), fetcher, ["ANC", "ZZZ"], min_airport_share=0.5
+    )
     assert catalog.missing_codes == ["ZZZ"]
     assert catalog.get("ZZZ") is None
 
@@ -108,10 +114,10 @@ def test_snapshot_keeps_only_the_covered_airports_and_load_never_fetches(tmp_pat
     store = SnapshotStore(tmp_path)
     fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
     respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
-    refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"])
+    refresh_catalog(DataProvider(store), fetcher, ["ANC", "BOS"], min_airport_share=0.5)
     respx.clear()  # any request from here on would fail the test
 
-    catalog = load_catalog(DataProvider(store), ["ANC", "BOS"])
+    catalog = load_catalog(DataProvider(store), ["ANC", "BOS"], min_airport_share=0.5)
 
     assert catalog.provenance.mode is DataMode.SNAPSHOT
     assert catalog.provenance.note == ""
@@ -124,7 +130,7 @@ def test_snapshot_keeps_only_the_covered_airports_and_load_never_fetches(tmp_pat
 
 def test_load_without_a_snapshot_says_so(tmp_path: Path) -> None:
     with pytest.raises(DataUnavailableError, match="no valid snapshot"):
-        load_catalog(DataProvider(SnapshotStore(tmp_path)), ["ANC"])
+        load_catalog(DataProvider(SnapshotStore(tmp_path)), ["ANC"], min_airport_share=0.5)
 
 
 @pytest.mark.parametrize(
@@ -132,7 +138,7 @@ def test_load_without_a_snapshot_says_so(tmp_path: Path) -> None:
 )
 def test_unusable_snapshot_content_raises_only_value_error(bad_text: str) -> None:
     with pytest.raises(ValueError):  # noqa: PT011
-        parse_catalog(bad_text, ["ANC"])
+        parse_catalog(bad_text, ["ANC"], min_airport_share=0.5)
 
 
 def test_airport_names_are_cut_to_plain_text_before_they_reach_the_model() -> None:
@@ -143,3 +149,34 @@ def test_airport_names_are_cut_to_plain_text_before_they_reach_the_model() -> No
 
     assert len(name) <= 80
     assert not set(name) & set("<>{}[]`")
+
+
+@respx.mock
+def test_a_thin_catalog_refresh_does_not_replace_a_good_snapshot(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    fetcher = HttpFetcher(retries=0, sleep=lambda _: None)
+    only_anc = "\n".join(
+        line for line in SAMPLE.splitlines() if not any(c in line for c in ('"KBOS"', '"KBDL"'))
+    )
+    coverage = ["ANC", "BOS", "BDL"]
+
+    with respx.mock:
+        route = respx.get(OURAIRPORTS_URL).respond(200, text=SAMPLE)
+        refresh_catalog(DataProvider(store), fetcher, coverage, min_airport_share=0.9)
+        good = store.load(SNAPSHOT_NAME)
+        route.respond(200, text=only_anc)
+
+        thin = refresh_catalog(DataProvider(store), fetcher, coverage, min_airport_share=0.9)
+
+    assert thin.provenance.mode is DataMode.SNAPSHOT
+    assert "too thin" in thin.provenance.note
+    assert store.load(SNAPSHOT_NAME) == good
+
+
+def test_names_are_cleaned_on_every_path_and_never_empty() -> None:
+    fields = {"iata": "BOS", "state": "MA", "latitude": 1.0, "longitude": 1.0, "size": "large"}
+
+    assert Airport(name="Boston <b>Logan</b> {{x}}", **fields).name == "Boston bLogan/b x"
+
+    with pytest.raises(ValueError, match="empty"):
+        Airport(name="<>{}[]", **fields)

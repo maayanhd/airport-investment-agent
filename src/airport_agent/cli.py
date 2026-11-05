@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
 from airport_agent.data.catalog import refresh_catalog
@@ -68,7 +68,10 @@ REFRESHERS: dict[RefreshSource, Callable[[DataProvider, HttpFetcher, Settings], 
     RefreshSource.TRAFFIC: load_traffic,
     RefreshSource.DELAYS: refresh_delays,
     RefreshSource.CATALOG: lambda provider, fetcher, settings: refresh_catalog(
-        provider, fetcher, settings.coverage_airports
+        provider,
+        fetcher,
+        settings.coverage_airports,
+        min_airport_share=settings.min_airport_share,
     ),
 }
 
@@ -283,7 +286,29 @@ def _score(codes: Sequence[str], settings: Settings, store: SnapshotStore) -> in
     return 0
 
 
+def _json_object(text: str) -> dict[str, Any] | None:
+    """The arguments as a dict, or None after printing why they are unusable."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as error:
+        print(f"arguments must be JSON: {error}")
+
+        return None
+
+    if not isinstance(parsed, dict):
+        print('arguments must be a JSON object, for example {"airport": "BOS"}')
+
+        return None
+
+    return parsed
+
+
 def _tool(name: str | None, arguments: str, settings: Settings, store: SnapshotStore) -> int:
+    parsed = _json_object(arguments) if name else {}
+
+    if parsed is None:
+        return 2
+
     try:
         data = load_dataset(settings, store, HttpFetcher())
     except DataUnavailableError as error:
@@ -299,14 +324,7 @@ def _tool(name: str | None, arguments: str, settings: Settings, store: SnapshotS
 
         return 0
 
-    try:
-        parsed = json.loads(arguments)
-    except json.JSONDecodeError as error:
-        print(f"arguments must be JSON: {error}")
-
-        return 2
-
-    result = registry.call(name, parsed if isinstance(parsed, dict) else {})
+    result = registry.call(name, parsed)
     print(result.model_dump_json(indent=2))
 
     return 0 if result.ok else 1

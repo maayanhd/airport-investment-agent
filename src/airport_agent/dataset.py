@@ -30,9 +30,12 @@ class Dataset:
 
 
 def load_dataset(settings: Settings, store: SnapshotStore, fetcher: HttpFetcher) -> Dataset:
-    """Read-only. Raises DataUnavailableError if the catalog or traffic cannot be had."""
+    """Writes no snapshot. Catalog and delays are read from snapshots; traffic is fetched live
+    first, with its snapshot as the fallback. Raises DataUnavailableError if either is missing."""
     provider = DataProvider(store, persist=False)
-    catalog = load_catalog(provider, settings.coverage_airports)
+    catalog = load_catalog(
+        provider, settings.coverage_airports, min_airport_share=settings.min_airport_share
+    )
     traffic = load_traffic(provider, fetcher, settings)
 
     try:

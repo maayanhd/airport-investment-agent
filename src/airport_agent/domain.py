@@ -1,13 +1,20 @@
 """Core value objects shared across layers."""
 
+import re
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 IATA_PATTERN = r"[A-Z]{3}"
 STATE_PATTERN = r"[A-Z]{2}"
+MAX_NAME_CHARS = 80
+
+
+def search_words(text: str) -> list[str]:
+    """Lower-case words with punctuation removed, so "L.A." and "la" are comparable."""
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
 
 
 class DataMode(StrEnum):
@@ -38,6 +45,18 @@ class Airport(BaseModel):
     latitude: float
     longitude: float
     size: Literal["large", "medium", "small"]
+
+    @field_validator("name")
+    @classmethod
+    def _plain_name(cls, name: str) -> str:
+        """Drop markup-like characters and cap the length. Words survive, so this does not stop
+        a name that reads like an instruction; tool output is treated as data, never as orders."""
+        cleaned = " ".join(re.sub(r"[^\w\s.,'&()/-]", "", name).split())[:MAX_NAME_CHARS]
+
+        if not cleaned:
+            raise ValueError("airport name is empty after cleaning")
+
+        return cleaned
 
 
 class MonthlyTraffic(BaseModel):

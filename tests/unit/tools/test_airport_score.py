@@ -111,3 +111,13 @@ def test_the_result_is_plain_json(dataset: Dataset) -> None:
 
 def test_every_component_has_a_label_and_a_format() -> None:
     assert LABELS.keys() == FORMATS.keys() == COMPONENTS.keys()
+
+
+def test_caveats_name_only_the_source_that_fell_back_to_a_snapshot(dataset: Dataset) -> None:
+    caveats = _call(dataset, "BOS").caveats
+
+    # The test fixture cannot reach BTS, so traffic fell back; catalog and delays are snapshots
+    # by design and must not add a line.
+    assert len(caveats) == 2
+    assert "T-100" in caveats[1]
+    assert "snapshot used" in caveats[1]

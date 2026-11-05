@@ -73,3 +73,11 @@ def test_aliases_must_be_lowercase_and_list_covered_airports(aliases: dict[str, 
 
     with pytest.raises(ValueError, match="airport_aliases"):
         Settings.model_validate(data)
+
+
+def test_alias_keys_must_be_in_the_form_the_resolver_matches() -> None:
+    settings = load_settings()
+    aliases = {**settings.airport_aliases, "st. louis": ["STL"]}
+
+    with pytest.raises(ValidationError, match="airport_aliases"):
+        Settings.model_validate({**settings.model_dump(), "airport_aliases": aliases})

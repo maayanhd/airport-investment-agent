@@ -448,3 +448,12 @@ def test_tool_rejects_arguments_that_are_not_json(
 def test_tool_reports_missing_data_instead_of_crashing(tmp_path: Path, capsys: Out) -> None:
     assert main(["tool"], root=tmp_path, settings=load_settings()) == 1
     assert "no valid snapshot" in capsys.readouterr().out
+
+
+@respx.mock
+@pytest.mark.parametrize("arguments", ['"BOS"', "[1, 2]", "not json"])
+def test_tool_rejects_bad_arguments_before_loading_any_data(arguments: str, capsys: Out) -> None:
+    status, out = _tool("airport_score", arguments, capsys=capsys)  # respx fails on any request
+
+    assert status == 2
+    assert "arguments must be" in out

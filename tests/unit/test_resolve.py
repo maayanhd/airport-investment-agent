@@ -8,7 +8,12 @@ from airport_agent.resolve import Match, Resolution, resolve_airport
 
 
 def _resolve(dataset: Dataset, query: str) -> Resolution:
-    return resolve_airport(query, dataset.catalog, dataset.settings.airport_aliases)
+    return resolve_airport(
+        query,
+        dataset.catalog,
+        dataset.settings.airport_aliases,
+        max_candidates=dataset.settings.max_name_candidates,
+    )
 
 
 @pytest.mark.parametrize("query", ["BOS", "bos", "  Bos "])
@@ -89,3 +94,16 @@ def test_any_text_gives_a_resolution_and_never_an_error(dataset: Dataset, query:
     found = _resolve(dataset, query)
 
     assert (found.code is not None) == (found.status is Match.RESOLVED)
+
+
+@pytest.mark.parametrize("query", ["international", "airport"])
+def test_a_vague_name_asks_for_something_clearer(dataset: Dataset, query: str) -> None:
+    found = _resolve(dataset, query)
+
+    assert (found.status, found.code, found.alternatives) == (Match.AMBIGUOUS, None, ())
+    assert "give a city, a state or an airport code" in found.note
+
+
+@pytest.mark.parametrize("query", ["L.A.", "l a", "Los-Angeles", "N.Y.C."])
+def test_punctuation_and_spacing_do_not_hide_an_alias(dataset: Dataset, query: str) -> None:
+    assert _resolve(dataset, query).status is Match.RESOLVED

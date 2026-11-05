@@ -1,5 +1,6 @@
 """The only way the LLM reaches data: named tools with validated arguments."""
 
+import logging
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
@@ -7,6 +8,21 @@ from pydantic import BaseModel, ValidationError
 from airport_agent.tools.result import ErrorKind, ToolResult
 
 MAX_ERROR_CHARS = 300
+logger = logging.getLogger(__name__)
+
+
+def _summary(error: ValidationError) -> str:
+    """Short "field: problem" list, cut at a whole item rather than mid-message."""
+    items = [f"{'.'.join(str(part) for part in e['loc'])}: {e['msg']}" for e in error.errors()]
+    shown = ""
+
+    for item in items:
+        if len(shown) + len(item) > MAX_ERROR_CHARS:
+            break
+
+        shown += ("; " if shown else "") + item
+
+    return f"invalid arguments - {shown or items[0][:MAX_ERROR_CHARS]}"
 
 
 class Tool(Protocol):
@@ -50,11 +66,26 @@ class ToolRegistry:
                 name, ErrorKind.UNKNOWN_TOOL, f"no tool {name!r}; use: {known}"
             )
 
-        try:
-            args = tool.input_model.model_validate(arguments)
-        except ValidationError as error:
-            message = f"invalid arguments: {error}"[:MAX_ERROR_CHARS]
+        unknown = arguments.keys() - tool.input_model.model_fields.keys()
+
+        if unknown:
+            allowed = ", ".join(tool.input_model.model_fields) or "none"
+            message = f"unknown argument(s): {', '.join(sorted(unknown))}; allowed: {allowed}"
 
             return ToolResult.failure(name, ErrorKind.BAD_ARGUMENTS, message)
 
-        return tool.run(args)
+        try:
+            args = tool.input_model.model_validate(arguments)
+        except ValidationError as error:
+            return ToolResult.failure(name, ErrorKind.BAD_ARGUMENTS, _summary(error))
+
+        try:
+            return tool.run(args)
+        except Exception:
+            logger.exception("tool %s failed", name)
+
+            return ToolResult.failure(
+                name,
+                ErrorKind.INTERNAL_ERROR,
+                "the tool failed unexpectedly; no result was produced",
+            )
