@@ -1,18 +1,19 @@
 # Airport Investment Intelligence Agent
 
-A conversational agent that helps analysts find US airports where modernization is most likely to pay off, based on passenger and flight-capacity pressure. Built as a one-day exercise; this README is the decision log, written before the code and updated as the system is built.
+A chat agent that helps analysts find US airports where modernization is likely to pay off, judged by passenger and flight-capacity pressure. It's a one-day exercise, so this README is the decision log: written before the code and updated as things get built.
 
-> Status: data layer (catalog, BTS traffic, On-Time delays) and KPIs and scoring done. Sections marked _TBD_ are filled in as milestones land.
+> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, and the tool layer (registry plus the `airport_score` tool) are done. The other tools, the LLM loop, the answer validator and the evals are not. Sections marked _TBD_ get filled in as each milestone lands.
 
 ## 1. Scope
-In scope: US airports, public aviation data, questions about congestion, long-haul share, capacity pressure and expansion candidates, with conversational follow-ups.
-Out of scope: non-US airports, financial returns, forecasts we cannot support from data, and any claim about observed "unmet demand" (it is not directly measurable; we report a labelled proxy).
+In scope: US airports, public aviation data, and questions about congestion, long-haul share, capacity pressure and expansion candidates, with follow-ups ("and what about BOS?").
+
+Out of scope: airports outside the US, financial returns, forecasts the data can't support, and any claim about observed "unmet demand". Nobody measures that directly, so we report a labelled proxy instead.
 
 ## 2. Assumptions (all configurable in `config.yaml`)
-- Long-haul = segment distance >= 1,500 miles.
-- New England = CT, MA, ME, NH, RI, VT.
-- Unmet demand is a **proxy**: high load factor + delay/cancellation pressure + seat growth lagging passenger growth.
-- Data vintage is shown with every answer.
+- Long-haul means a segment of 1,500 miles or more.
+- New England means CT, MA, ME, NH, RI and VT.
+- Unmet demand is a **proxy**: a full plane, delay pressure, and seats growing slower than passengers.
+- Every answer shows how old its data is.
 
 ### Data sources and limits
 | Source | Used for | Status |
@@ -21,20 +22,20 @@ Out of scope: non-US airports, financial returns, forecasts we cannot support fr
 | BTS T-100 summary by origin airport (Socrata API, no key) | monthly departures, passengers, seats, load factor, average flight distance | implemented (`data/traffic.py`) |
 | BTS On-Time Reporting (bulk monthly zips, 31 MB each) | cancellations and departure delays per airport and month | implemented (`data/delays.py`) |
 
-How data is fetched (`data/`):
-- **Live first, snapshot fallback.** Every result carries provenance: source, `live` or `snapshot`, fetch time, data month, and a note with the reason when a snapshot was used.
-- **Validate before overwriting.** Live content must parse before it replaces a snapshot, so a 200 response that is an error page or a truncated file never destroys the last good copy. Snapshots are written atomically and checked against a SHA-256 on load.
-- **Third-party data is untrusted.** Files are parsed into typed records. Airport names are cut to plain characters and 80 characters when an `Airport` is built, so every path (CSV, snapshot) gets the same cleaning, and an empty name is rejected. That does not stop a name made of ordinary words that reads like an instruction ("Ignore previous instructions"). The real defense is that tool output reaches the model as data under a system instruction never to follow it (M4), and the validator only lets numbers and airports from tool results into an answer.
-- **Coverage is explicit.** Only airports listed in `coverage_airports` are used. A covered code absent from the data is reported as "not in the data", not as "not covered".
-- **A thin or cut-off response never replaces a good snapshot.** BTS data is accepted only if no query limit was reached and at least `min_airport_share` of the covered airports have `traffic_min_months` months (24, enough for last 12 vs prior 12). The BTS window is 30 months because the data lags 3 to 4 months.
-- **All three snapshots are committed.** Each is a filtered result, not a raw download: BTS traffic (about 590 KB) and delays (about 120 KB) for the covered airports and the columns we use, and the covered US airports from OurAirports (13 KB, cut from the 12.7 MB world file). The offline demo and CI work from a clone; `airport-agent data refresh traffic|delays|catalog` renews them.
-- **Inspecting data.** `airport-agent data show ANC` is read-only. `airport-agent data refresh` fetches and saves the snapshot (it exits non-zero if live data was unusable or the snapshot could not be written). `airport-agent data status` lists snapshots and flags missing files, bad checksums and stale or unknown data months.
-- **On-Time data is snapshot-first.** Each monthly file is 31 MB, so it is never downloaded while serving a request. `airport-agent data refresh delays` downloads the last 12 published months, sums them per airport and month (flights, cancelled, departures 15+ minutes late, delay minutes) and saves a small snapshot that the agent reads. A 404 means "not published yet" and is skipped; any other failure keeps the old snapshot.
-- **On-Time limits.** It covers only the airlines that report to BTS (large carriers), so its counts are lower than T-100 and the delay figures describe those carriers. A few covered airports have none (for example HVN and LEB), and the agent says "no delay data" for them. Delays on cancelled flights are ignored.
-- **Staleness and partial data.** A snapshot older than `max_data_age_months` (6) is flagged `stale` in its provenance and the output says how old it is. Airports with fewer months than the minimum (ACK, MVY, HYA are seasonal) are listed and shown with a "do not compare years" note.
-- **Known limits of `data refresh delays`.** It downloads about 370 MB one file at a time (16 minutes on a slow server), and one missing older month aborts the run and keeps the old snapshot instead of leaving a silent gap. That is acceptable for a manual command; per-month caching or parallel downloads are the next step if refreshes become frequent.
+How the data layer behaves (`data/`):
+- **Live first, snapshot as the fallback.** Every result says where it came from: source, `live` or `snapshot`, when it was fetched, which data month it covers, and why a snapshot was used if one was.
+- **Bad data never replaces good data.** Live content has to parse before it overwrites a snapshot, so an error page or a truncated file can't destroy the last good copy. Snapshots are written atomically and checked against a SHA-256 when loaded.
+- **Thin responses are rejected too.** BTS traffic is accepted only if the query didn't hit its row limit and at least `min_airport_share` of the covered airports have 24 months (enough for the last 12 against the 12 before). The request window is 30 months because BTS data lags by 3 to 4 months. The catalog uses the same share rule.
+- **Third-party data is untrusted.** Files are parsed into typed records. When an `Airport` is built, its name is cut to plain characters and 80 characters, and an empty name is rejected, so the CSV and the snapshot get identical treatment. That can't stop a name made of ordinary words that reads like an instruction ("Ignore previous instructions"). The real defense is that tool output reaches the model as data, under a system instruction never to follow it (M4), and that the validator only lets numbers and airports from tool results into an answer.
+- **Coverage is explicit.** Only airports in `coverage_airports` are used. A covered code that's missing from the data is reported as "not in the data", not as "not covered".
+- **All three snapshots are committed.** Each is a filtered result, not a raw download: BTS traffic (about 590 KB) and delays (about 120 KB) for the covered airports and the columns we use, and the covered US airports from OurAirports (13 KB, cut down from the 12.7 MB world file). A fresh clone works offline and CI doesn't need the network. `airport-agent data refresh traffic|delays|catalog` renews them.
+- **Inspecting data.** `airport-agent data show ANC` is read-only. `data refresh` fetches and saves a snapshot, and exits non-zero if the live data was unusable or couldn't be written. `data status` lists the snapshots and flags missing files, bad checksums, and stale or unknown data months.
+- **On-Time data is snapshot-first.** Each monthly file is 31 MB, so it's never downloaded while answering a question. `data refresh delays` downloads the last 12 published months, sums them per airport and month (flights, cancelled, departures 15+ minutes late, delay minutes), and saves a small snapshot for the agent to read. A 404 means "not published yet" and is skipped. Any other failure keeps the old snapshot.
+- **On-Time limits.** Only airlines that report to BTS (the large carriers) are included, so counts are lower than T-100 and the delay figures describe those carriers. A few covered airports have none at all (HVN and LEB, for example), and the agent says "no delay data" for them. Delays on cancelled flights are ignored.
+- **Stale and partial data.** A snapshot older than `max_data_age_months` (6) is flagged `stale` and the output says how old it is. Airports with fewer months than the minimum (ACK, MVY and HYA are seasonal) are listed with a "do not compare years" note.
+- **`data refresh delays` is slow.** It downloads about 370 MB one file at a time, around 16 minutes on a slow server, and one missing older month aborts the run and keeps the old snapshot instead of leaving a silent gap. That's fine for a manual command. If refreshes become frequent, per-month caching comes before parallel downloads.
 
-OurAirports limits: only US airports of type large, medium or small are kept (heliports, seaplane bases and closed fields are dropped). IATA codes are not unique worldwide (a small Argentine airport also has code BOS), so the country filter is required. The file is community-maintained and has no release date, so its `as_of` is the month it was fetched. Airport names are third-party text that reaches the model, so they are cut to 80 plain characters at load.
+OurAirports limits: only US airports of type large, medium or small are kept (heliports, seaplane bases and closed fields are dropped). IATA codes aren't unique worldwide (a small Argentine airport also uses BOS), so the country filter is required. The file is community-maintained with no release date, so its `as_of` is the month we fetched it.
 
 ## 3. Risk and what happens when the system is wrong
 Being wrong with confidence is worse than abstaining.
@@ -43,73 +44,84 @@ Being wrong with confidence is worse than abstaining.
 |---|---|---|
 | Low | single metric lookup (% long-haul at ANC) | answer with source and data date |
 | Medium | comparisons (LA vs SNA congestion) | answer with assumptions and a "proxy" badge |
-| High | rankings, recommendations, "why" narratives | answer with confidence, assumptions, full score breakdown; export requires human sign-off |
+| High | rankings, recommendations, "why" narratives | answer with confidence, assumptions and the full score breakdown; export needs human sign-off |
 
-Human review does **not** sit in the chat path (it would break a conversational agent):
-1. **In the request path (automatic):** every number comes from tool output; a deterministic validator blocks any number or airport not present in tool results (one retry, then abstain); out-of-scope, unknown-entity or low-confidence questions get a clarifying question or refusal.
-2. **Out of band:** thumbs/flag feedback goes to a ledger; flagged answers are reviewed asynchronously; approved answers become exemplars.
-3. **At the point of consequence:** anything exported or sent in the firm's name needs a human.
+Human review does **not** sit in the chat path, because it would break a conversation:
+1. **In the request path (automatic):** every number comes from tool output. A deterministic validator blocks any number or airport that isn't in the tool results (one retry, then abstain). Out-of-scope, unknown-airport or low-confidence questions get a clarifying question or a refusal.
+2. **Out of band:** thumbs and flag feedback go to a ledger. Flagged answers are reviewed later, and approved ones become exemplars.
+3. **At the point of consequence:** anything exported or sent in the firm's name needs a person.
 
 ## 4. Deterministic vs LLM
-Data, KPIs, scoring and name resolution are plain Python. The LLM only chooses a tool, fills its arguments, resolves follow-ups and writes the explanation from tool output. It never calls an API and never produces a number.
+Data, KPIs, scoring and name resolution are plain Python. The LLM picks a tool, fills in its arguments, resolves follow-ups and writes the explanation from tool output. It never calls an API and never produces a number.
 
-**Tools** (`tools/`): a small registry of named tools, each with a pydantic input model that gives both the JSON schema sent to the model and the validation of what comes back. A bad call returns an error result instead of raising. Every result has the same shape: `data`, `assumptions` (how a name was read, the scoring rules), `caveats` (proxies, partial, snapshot or stale data), `sources` (provenance) and a typed `error` (ambiguous airport, not covered, insufficient data) that tells the agent to ask or abstain. Numbers in `data` are rounded once, with a `shown` string to quote, so the validator can match the answer against them exactly.
+**Tools** (`tools/`): a small registry of named tools. Each has a pydantic input model that gives both the JSON schema sent to the model and the validation of what comes back. A bad call returns an error result instead of raising. Every result has the same shape: `data`, `assumptions` (how a name was read, the scoring rules), `caveats` (proxies, partial, fallback or stale data), `sources` (provenance) and a typed `error` (ambiguous airport, not covered, insufficient data) that tells the agent to ask or abstain. Numbers in `data` are rounded once, with a `shown` string to quote, so the validator can match an answer against them exactly.
 
-**Names** (`resolve.py`): a code resolves directly; a common name uses the alias table in `config.yaml` (LA means LAX, with BUR, LGB, ONT and SNA offered); an official name resolves when exactly one covered airport matches; a name shared by several airports ("Portland") is returned as a question, never guessed.
+**Names** (`resolve.py`): a code resolves directly. A common name uses the alias table in `config.yaml` (LA means LAX, with BUR, LGB, ONT and SNA offered as alternatives). An official name resolves when exactly one covered airport matches. A name shared by several airports ("Portland") comes back as a question, never a guess.
 
 **Run a tool without the LLM:** `airport-agent tool airport_score '{"airport": "LA"}'` prints exactly what the model would see.
 
 ## 5. Scoring methodology
-All of it is plain Python (`kpis.py`, `scoring.py`); the LLM never computes or changes a number.
+All plain Python (`kpis.py`, `scoring.py`). The LLM never computes or changes a number.
 
-**KPIs** (per airport, from the last 12 months of each source; both months are shown):
-- *Passenger growth*: passengers in the last 12 months vs the 12 before (needs 24 consecutive months).
-- *Load factor*: total passengers / total seats over the last 12 months, from the counts and not from the rounded percentage the API gives.
+**KPIs** (per airport, over the last 12 months of each source; both data months are shown):
+- *Passenger growth*: passengers in the last 12 months against the 12 before. Needs 24 consecutive months.
+- *Load factor*: total passengers over total seats for the last 12 months, computed from the counts rather than from the rounded percentage the API gives.
 - *Capacity gap*: passenger growth minus seat growth. Positive means demand is outgrowing supply.
 - *Delay pressure*: share of operated flights that left 15+ minutes late (On-Time, reporting carriers only). Needs 9 consecutive months, so seasonal airports (ACK, MVY, HYA) get none and the output says so.
-- Also computed for explanations: cancellation rate, average delay minutes, and the departure-weighted average flight distance.
+- Also computed for explanations: cancellation rate, average delay minutes, and departure-weighted average flight distance.
 
-**Score** = 100 x sum(weight x scaled KPI) / sum(weights of the KPIs that have data). Each KPI is scaled to 0..1 by a fixed range from `config.yaml` (`score_bounds`, clipped outside) and weighted by `score_weights` (0.3 / 0.3 / 0.2 / 0.2). Every component points toward "stronger case for expansion": growth, a fuller plane, more delays and demand outgrowing seats.
+**Score** = 100 × sum(weight × scaled KPI) ÷ sum(weights of the KPIs that have data). Each KPI is scaled to 0..1 by a fixed range from `config.yaml` (`score_bounds`, clipped outside) and weighted by `score_weights` (0.3, 0.3, 0.2, 0.2). Every component points the same way, toward a stronger case for expansion: more growth, a fuller plane, more delays, demand outgrowing seats.
 
-**Confidence** is the total weight of the KPIs that had data. Below `min_confidence` (0.6) there is no score and the reason is given. A score built from 80% of the weight is shown with that confidence and the missing KPI named.
+**Confidence** is the total weight of the KPIs that had data. Below `min_confidence` (0.6) there's no score, just the reason. A score built from 80% of the weight is shown with that confidence and the missing KPI named.
 
 Why these choices:
-- *Fixed ranges, not rank or min-max across the airports compared.* A score then does not change when the user adds an airport or asks a follow-up, and one outlier cannot squash everyone else. The ranges are roughly the 5th to 95th percentile of the 97 covered airports on the 2026-11 data, rounded; they are assumptions and are echoed to the user.
-- *No ML.* There is no label ("this expansion paid off") to train on, 97 airports is little data, and the score must be explainable line by line.
-- *Proxies, said as such.* Delay pressure is a congestion proxy (airline problems also cause delays). "Unmet demand" is not observed: the capacity gap and the load factor are the closest signals. Average flight distance is not a long-haul share: BTS has no route-level distance in the public API.
-- *Partial scores are not hidden.* An airport missing one KPI can rank above one that has all four, because the remaining weights are renormalized. That is why confidence and the missing KPI are always shown next to it.
-- *Check it:* `airport-agent score BOS BDL SFO` prints each component, its scaled value, weight and points.
+- *Fixed ranges, not rank or min-max across the airports being compared.* A score then doesn't change when the user adds an airport or asks a follow-up, and one outlier can't squash everyone else. The ranges are roughly the 5th to 95th percentile of the 97 covered airports on 2026-11 data, rounded. They're assumptions, and they're echoed to the user. Load factor is the skewed one (5th percentile 48%, median 77%, 95th 82%), hence `[50, 82]`. An earlier `[65, 85]` pushed 11 airports to zero.
+- *No ML.* There's no label ("this expansion paid off") to train on, 97 airports is very little data, and the score has to be explainable line by line.
+- *Proxies are called proxies.* Delay pressure is a congestion proxy, since airline problems also cause delays. "Unmet demand" isn't observed: capacity gap and load factor are the closest signals. Average flight distance isn't a long-haul share, because the public BTS API has no route-level distances.
+- *Partial scores aren't hidden, but they aren't ranked as equals.* A missing KPI means the remaining weights are rescaled, so that score isn't comparable with a full one. `rank` puts airports with all four components first, then partial ones, and confidence plus the missing KPI are always shown next to the number.
+- *Try it:* `airport-agent score BOS BDL SFO` prints each component with its scaled value, weight and points. It prints in the order you typed, not ranked.
 
 ## 6. Model choice and cost
-Smallest model that passes the eval for each step. Router/agent loop starts with a Haiku-class model, escalate only if evals show a gap; judge is Sonnet-class and offline only. _Measured table TBD (M6)_.
+Smallest model that passes the eval for each step. The router and agent loop start with a Haiku-class model and escalate only if the evals show a gap. The judge is Sonnet-class and offline only. _Measured table TBD (M6)._
 
 ## 7. Evaluation
-_TBD (M6)_: 40-question set (incl. ~8 adversarial), tool-selection precision/recall and confusion matrix, numeric checks against gold values, validator catch rate, LLM-as-judge rubric (answers the question, no invented info, tone, states assumptions) calibrated on hand-labelled samples, results appended to a ledger.
+_TBD (M6)_: a 40-question set (about 8 adversarial), tool-selection precision and recall with a confusion matrix, numeric checks against gold values, validator catch rate, and an LLM-as-judge rubric (answers the question, no invented information, tone, states assumptions) calibrated on hand-labelled samples. Results get appended to a ledger.
 
 ## 8. Architecture and engineering principles
-KISS/YAGNI (no agent framework, vector DB or database), SOLID where it pays (small Protocols for data source, LLM client and feedback store; tool registry), DRY (one config, schemas generated from pydantic models), pure-function KPIs, enforced by ruff, mypy --strict, pytest and CI.
+KISS and YAGNI (no agent framework, vector DB or database). SOLID where it pays: small Protocols for the data source, LLM client and feedback store, and a tool registry. DRY: one config, schemas generated from pydantic models. KPIs are pure functions. ruff, `mypy --strict`, pytest and CI enforce it.
 
-Tradeoffs made so far (simpler option chosen, to be revisited when a milestone needs more):
-- **No Protocols yet.** There is one implementation of each data component, so `AirportCatalog` and the other Protocols are added with the first tool or second implementation that needs them (a fake LLM, a BTS source).
-- **No speculative code or config.** Snapshot line counts, `persist_live` and a data-age limit were removed; each returns in the change that uses it.
-- **Parse once, I/O at the edge.** `DataProvider.fetch(parse=...)` returns the parsed value, and `load_catalog` does the fetch, so `OurAirportsCatalog` is a pure lookup that tests can build from plain data.
-- **Snapshot write failures are non-fatal for answers, loud for refresh.** A full or read-only disk logs a warning and the live data is still served; the cost is losing the fallback copy. The provenance carries `save_failed` and a note, so `data refresh` exits 1 with "could not write the snapshot" instead of reporting "saved" after a 16-minute download. The flag lives on `Provenance` (not on `Fetched`) because callers only keep the provenance.
-- **Damaged manifest is logged, not repaired losslessly.** The next save rebuilds it and drops other entries, whose snapshots are simply refetched.
-- **Single-process assumption.** One analyst or a few chat sessions in one process; concurrent writers from several processes are untested (the temp-file name is shared).
-- **Tool failures are results, not exceptions.** `ToolRegistry.call` never raises: unknown tools, unknown or misspelled arguments (rejected, not dropped, so the model cannot claim an option it never had), invalid values (short "field: problem" text) and crashes inside a tool (logged, returned as `internal_error` without the traceback) all come back as a typed `ToolResult`.
-- **Vague names ask, they do not list.** A name matching more than `max_name_candidates` (8) airports ("international" matches 73) gets "give a city, a state or a code" instead of a long list. Aliases match ignoring punctuation and spacing ("L.A.", "l a"), and alias keys in `config.yaml` must already be in that plain form.
-- **A thin catalog never replaces a good one.** The catalog refresh uses the same `min_airport_share` rule as traffic and delays.
-- **Caveats are only for surprises.** Catalog and delays are snapshots by design, so they add a caveat only when stale; traffic adds one when live data fell back to a snapshot. Every result still lists all sources with their data month.
-- **Read-only is a property of the provider, not of each call.** `DataProvider(store, persist=False)` is built for `show`, so `fetch` stays at 5 arguments (the ruff limit) and no caller can forget the flag. Thin or cut-off responses are rejected before any write either way.
-- **Validate once, at the config boundary.** `Settings` already enforces 3-letter IATA codes, so `load_traffic` does not re-check them; a second check would guard nothing and its test needed a `Settings` that cannot exist. The data layer takes `Settings` whole to keep signatures short; if a second caller needs a different shape, pass the four values directly.
-- **Unknown is stale, not a crash.** `check_age` treats an empty or malformed data month (for example a hand-edited manifest) as stale with the note "data month unknown", so the answer says so instead of ending in a traceback. Tests that load a snapshot pin `today`, because the staleness rule makes the real clock part of the result.
-- **Typed lambdas over `attrgetter` for sort keys.** `attrgetter("month")` takes the field name as a string, which `mypy --strict` and renames cannot check; `lambda m: m.month` is the same length and fully typed.
-- **Small helpers instead of long parsers.** `parse_traffic` reads, rejects truncation, groups, then checks coverage in four named steps (`history.py` holds the checks shared with the delays adapter). CLAUDE.md sets 20 lines as the target and about 30 as the point to split; this is a review convention, ruff only enforces complexity and argument count.
+Tradeoffs so far. In each case we took the simpler option and will revisit it when a milestone needs more.
+
+Data and I/O:
+- **No data-source Protocols yet.** There's one implementation of each data component, so Protocols arrive with the first thing that needs a second one (a fake LLM, another source). The tool registry already has one, because tools are many.
+- **No speculative code or config.** Snapshot line counts, `persist_live` and a data-age limit were removed. Each comes back in the change that uses it.
+- **Parse once, I/O at the edge.** `DataProvider.fetch(parse=...)` returns the parsed value. `refresh_catalog` does the download and `load_catalog` only reads the snapshot, so `OurAirportsCatalog` is a pure lookup that tests can build from plain data.
+- **Read-only belongs to the provider, not each call.** `DataProvider(store, persist=False)` is what `show` and the tools use, so `fetch` stays at 5 arguments (the ruff limit) and no caller can forget a flag.
+- **Failing to save is quiet for answers and loud for refresh.** A full or read-only disk logs a warning and the live data is still served; the cost is losing the fallback copy. The provenance carries `save_failed` and a note, so `data refresh` exits 1 with "could not write the snapshot" instead of printing "saved" after a 16-minute download. The flag lives on `Provenance`, not on `Fetched`, because callers only keep the provenance.
+- **A damaged manifest is logged, not repaired losslessly.** The next save rebuilds it and drops the other entries, whose snapshots are simply refetched.
+- **Single process.** One analyst, or a few chat sessions in one process. Several writer processes are untested (the temp-file name is shared).
+- **An unknown data month counts as stale.** `check_age` treats an empty or malformed month (a hand-edited manifest, say) as stale with the note "data month unknown", rather than crashing. Tests that load a snapshot pin `today`, because the staleness rule makes the real clock part of the result.
+- **Validate once, at the config boundary.** `Settings` already enforces 3-letter IATA codes, so `load_traffic` doesn't check them again. The data layer takes `Settings` whole to keep signatures short; if a second caller needs a different shape, pass the four values directly.
+
+Tools:
+- **Tool failures are results, not exceptions.** `ToolRegistry.call` never raises. Unknown tools, unknown or misspelled arguments, invalid values and crashes inside a tool all come back as a typed `ToolResult`. Unknown arguments are rejected rather than dropped, so the model can't claim an option it never had. Validation errors read as a short "field: problem", and a crash is logged and returned as `internal_error` without the traceback.
+- **Vague names ask, they don't list.** A name matching more than `max_name_candidates` (8) airports ("international" matches 73) gets "give a city, a state or a code". Aliases match ignoring punctuation and spacing ("L.A.", "l a"), and alias keys in `config.yaml` must already be in that plain form.
+- **Caveats are for surprises.** The catalog and delays are snapshots by design, so they add a caveat only when stale. Traffic adds one when live data fell back to a snapshot. Every result still lists all its sources with their data month.
+
+Code:
+- **Typed lambdas over `attrgetter` for sort keys.** `attrgetter("month")` takes the field name as a string that `mypy --strict` and renames can't check. `lambda m: m.month` is the same length and fully typed.
+- **Small helpers instead of long parsers.** `parse_traffic` reads, rejects truncation, groups, then checks coverage in four named steps (`history.py` holds the checks shared with the delays adapter). CLAUDE.md sets 20 lines as the target and about 30 as the point to split. That's a review convention; ruff only enforces complexity and argument count.
 
 ## 9. Limitations and failure cases
-_TBD_: foreign-language questions, stale or missing data, small airports, weak proxies, small eval set.
+_TBD_: foreign-language questions, stale or missing data, small airports, weak proxies, a small eval set.
 
-Known so far: the airport catalog has no publication date, only a fetch month (see data sources above); when live data is unavailable the answer comes from the last snapshot and must say so; the OurAirports fixture in `tests/fixtures/` is a real excerpt (dated in its README), so it proves the parser handles the real format as of that date; CI does not detect later upstream changes unless the fixture is refreshed.
+Known so far:
+- **The score doesn't know airport size.** +17% growth at a small airport counts the same as +17% at a hub, and a short list can be full of small airports. Passenger volume should sit next to the score before this goes in front of an investor.
+- **Some components saturate.** Several airports sit at the top of the range on passenger growth or capacity gap, so those rows can't separate them. A test fails if more than 15% of airports sit at either end of a range, so the bounds get re-checked after each refresh.
+- **Delay pressure counts delays as demand.** That's the proxy design, and it means a congested airport scores higher.
+- **The catalog has no publication date**, only a fetch month.
+- **When live data is unavailable**, the answer comes from the last snapshot and says so.
+- **The OurAirports fixture** in `tests/fixtures/` is a real excerpt (dated in its README). It shows the parser handles the real format as of that date, and CI won't notice later upstream changes until the fixture is refreshed.
 
 ## 10. At scale, monitoring and drift
 _TBD_
