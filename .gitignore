@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .env
+.claude/
+.hypothesis/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/

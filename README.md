@@ -2,7 +2,7 @@
 
 A chat agent that helps analysts find US airports where modernization is likely to pay off, judged by passenger and flight-capacity pressure. It's a one-day exercise, so this README is the decision log: written before the code and updated as things get built.
 
-> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, the tool layer (registry plus five tools), the answer validator, the agent loop, the offline eval harness, the real model client, the HTTP API and the chat page are done. The model-backed eval, the judge and the cost table are built and have had a first paid run (section 6); the judge is not yet calibrated, and the first run missed two thresholds. Sections marked _TBD_ get filled in as each milestone lands.
+> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, the tool layer (registry plus five tools), the answer validator, the agent loop, the offline eval harness, the real model client, the HTTP API and the chat page are done. The model-backed eval, the judge and the cost table are built and have had a first paid run (section 6); the judge is not yet calibrated, and the first run missed two thresholds. Voice input, the bonus item, is not built. Sections marked _TBD_ get filled in as each milestone lands.
 
 ## 1. Scope
 In scope: US airports, public aviation data, and questions about congestion, long-haul share, capacity pressure and expansion candidates, with follow-ups ("and what about BOS?").
@@ -76,6 +76,18 @@ All tunable values live in `config.yaml`, with a comment there. This table says 
 | `judge_min_labels` | 20 | Hand-labelled answers needed before judge scores are called calibrated. |
 | `judge_min_agreement` | 0.80 | On every criterion, the share of judge scores within the tolerance of the hand label that calibration needs. |
 | `judge_agreement_tolerance` | 1 | How many points apart (on the 1 to 5 scale) a judge score and a hand label may be and still agree. |
+
+### What the score and the answers claim
+These assumptions define what the product does and does not claim:
+- Expansion desirability is an operational-pressure proxy, not an estimate of financial return, construction feasibility, available land, gate capacity, airline interest, passenger willingness to pay, or a forecast of future demand.
+- Growth is compared across rolling, consecutive trailing windows. The latest available month is allowed only when each source has enough complete history; missing or seasonal months are not filled in.
+- Passenger growth and capacity gap are based on BTS T-100 counts. They describe reported scheduled/charter passenger activity and seats in the covered data set, not actual demand that was refused or unavailable.
+- Load factor and delay pressure are treated as airport-level indicators, but BTS coverage, carrier reporting and route mix differ by airport. The score does not normalise for airline mix, airport type, weather, seasonality, runway constraints, terminal ownership, geography or time zone.
+- Higher delay pressure means stronger capacity pressure only for this exercise. It is not treated as proof that expansion solves a delay problem or that investment would improve service.
+- Congestion, unmet demand and expansion potential are labels for the configured proxies. They are not measurements of demand, capacity, congestion or investment value.
+- Fixed score weights and bounds are modelling choices made from the current covered-airport snapshot. They must be reviewed when coverage, source methodology, BTS revisions or the 2026-11 peer population change; score stability is assumed across airports and questions, not across time.
+- Regional ranking means that every covered airport in the named state or region is eligible. A score is not a recommendation, and lower confidence or missing components can affect comparability even if a score is shown.
+- Public-source availability, revisions and publication lag are outside the product's control. Live and snapshot values are kept separate in answers so users can see which evidence supported a result.
 
 ## 3. Risk and what happens when the system is wrong
 Being wrong with confidence is worse than abstaining.
@@ -242,10 +254,10 @@ These are the known ways the answers can be wrong or unhelpful. Each says whethe
 **About the model and the validator**
 - **The validator checks numbers, airport codes and a few claim shapes, not meaning.** It can't tell which airport a number belongs to when two share a sentence, can't catch an airport named without its code, and doesn't check qualitative claims ("clearly the best"). The model can also state a wrong rule about the tools in words: in one test it said a ranking needs two airports, which isn't true. The prompt now tells it not to describe how the tools work, but that is a request, not a check.
 - **"Figures only" answers.** When the validator rejects the wording twice, the user sees the tools' raw figures with a notice. In a first manual chat test, 4 of 12 answers did this (and one was unavailable), and in a second test 0 of 7 did (one unavailable), so the rate is not yet known. The reasons are logged (`showed tool figures only: ...`). Measuring and lowering this rate is the point of the model-backed evals.
-- **One question failed repeatedly with "assistant unavailable"** ("Score Hyannis"). The tool result is fine, so the failure is on the model call. The suspected cause is a reply cut off at `llm_max_tokens`; the log line settles it and nothing has been changed on a guess.
+- **One question failed repeatedly with "assistant unavailable"** ("Score Hyannis"). The tool result is fine, so the failure is on the model call. The suspected cause is a reply cut off at `llm_max_tokens` (thinking tokens may count toward it); the log line settles it and nothing has been changed on a guess.
 - **Prompt injection is only partly covered.** Airport names are cleaned to plain characters and tool output is passed as data under an instruction not to follow it, but ordinary words that read like an instruction can't be filtered out. The validator limits what can reach the user, not what the model reads.
 - **English only, and only the questions the five tools cover.** Others are declined.
-- **The evals are not model-backed yet.** The harness is proven with a stand-in model, the judge is not run, and the 40 questions are a small set.
+- **The evals are a small sample.** There are 44 turns in 40 cases, written by us. One model-backed run is one sample (the model is not deterministic), the judge is uncalibrated, and the first run missed two thresholds (section 6).
 
 ## 10. At scale, monitoring and drift
 This is what exists today and what a production deployment would need. Nothing here has been load-tested.
@@ -264,6 +276,23 @@ This is what exists today and what a production deployment would need. Nothing h
 - **Score validity:** the weights and ranges are assumptions. They should be revisited against outcomes once there are any to compare with.
 
 **Other things a production system would still need:** a standing "screening aid, not financial advice" notice on the page, export with a human sign-off, and a feedback loop for analysts to flag wrong answers.
+
+### What production would still need
+
+This is a safe demo architecture, not a production service. The following work is still required before this product is exposed to real analysts or consequential decisions:
+
+- **Identity and access:** add authenticated users, roles, authorization, API key rotation, tenant isolation if applicable, CSRF protection for browser flows and audit trails for exported or shared answers.
+- **Secrets and configuration:** validate startup configuration; use a managed secret store; define environment-specific budgets and allowed data providers; prevent secrets and prompts from entering logs or telemetry.
+- **Deployment and reliability:** run multiple stateless workers, put the in-memory session store behind an external store with TTL and replication, add health/readiness checks, graceful shutdown, request deadlines, timeouts, retries with bounded backoff and circuit breakers for model/data providers.
+- **Scalability:** bound concurrency and memory, rate-limit abuse and expensive model calls, set per-request and per-tenant quotas, and load-test the API, model provider and snapshot startup path.
+- **Data operations:** establish an owned refresh schedule with publication calendars and alerting; version snapshots and provenance; detect source schema changes and revisions; support rollback, retention and backups; quarantine or repair bad data without silently replacing prior evidence.
+- **Data quality and model governance:** run larger sampled ground-truth checks, document methodology review and approval, monitor score-bound drift, data freshness and source coverage, and add a tested change process for weights, thresholds, prompts and model versions.
+- **Security:** add content security headers, strict CORS, request-size limits, dependency vulnerability scanning, prompt-injection regression tests, output safety checks, protected downloads, malware/rate controls at the edge and periodic threat review of provider data, tools and LLM-generated HTML/text.
+- **Validation and deterministic safety:** broaden validation beyond current heuristic patterns with sentence-level provenance and adversarial coverage; support reference citations; make abstention and fallback behavior measurable; and keep a human sign-off for investment or export decisions.
+- **Observability and operations:** add structured logs, request IDs, model/tool latency and error metrics, token/cost telemetry, redaction, dashboards, alarms and runbooks. Avoid logging full questions, answers or user identifiers without an explicit retention and privacy policy.
+- **Privacy and compliance:** publish retention/deletion policies, classify stored data, protect session history, support regional residency, execute vendor terms/data-processing reviews and assess accessibility and regulatory requirements for the intended audience.
+- **Resilience testing and release:** add chaos/failure injection, restore drills, canary releases and rollback; run the full unit/contract/integration/e2e suite and model evals in CI for every release.
+- **Client and availability:** move from localhost-only serving to a hardened web deployment; add reconnect/error states, session recovery, accessible chat controls, provider status, maintenance mode and a documented support/incident process.
 
 ## Development
 ```bash
