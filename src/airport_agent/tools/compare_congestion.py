@@ -27,19 +27,19 @@ class CompareArgs(BaseModel):
     airport_b: str = Field(min_length=1, max_length=60, description="Second airport or city.")
 
 
-def _months(data: Dataset, code: str) -> int:
-    return min(len(data.delays.series(code)), YEAR) if data.delays else 0
+def _window_caveats(resolved: list[Resolved], kpis: list[AirportKpis]) -> list[str]:
+    codes = [r.code for r in resolved]
+    caveats = []
 
+    if len({k.delay_months for k in kpis}) > 1:
+        used = ", ".join(f"{c} {k.delay_months}" for c, k in zip(codes, kpis, strict=True))
+        caveats.append(f"The airports have different numbers of delay months ({used}).")
 
-def _window_caveat(data: Dataset, resolved: list[Resolved]) -> list[str]:
-    months = {r.code: _months(data, r.code) for r in resolved}
+    if len({k.delays_through for k in kpis}) > 1:
+        ends = ", ".join(f"{c} {month(k.delays_through)}" for c, k in zip(codes, kpis, strict=True))
+        caveats.append(f"The delay data ends in different months ({ends}), so seasons differ.")
 
-    if len(set(months.values())) == 1:
-        return []
-
-    used = ", ".join(f"{code} {count}" for code, count in months.items())
-
-    return [f"The airports have different numbers of delay months ({used}), so seasons differ."]
+    return caveats
 
 
 def _row(data: Dataset, code: str, kpis: AirportKpis) -> dict[str, object]:
@@ -49,7 +49,7 @@ def _row(data: Dataset, code: str, kpis: AirportKpis) -> dict[str, object]:
         "cancel_rate": metric(kpis.cancel_rate, percent),
         "avg_delay_minutes": metric(kpis.avg_delay_minutes, minutes, digits=1),
         "load_factor": metric(kpis.load_factor, load_percent, digits=1),
-        "delay_months": _months(data, code),
+        "delay_months": kpis.delay_months,
         "delays_through": month(kpis.delays_through),
     }
 
@@ -80,17 +80,21 @@ class CompareCongestionTool:
             return ToolResult.failure(self.name, ErrorKind.BAD_ARGUMENTS, message)
 
         kpis = [kpis_for(self._data, r.code) for r in resolved]
-        lacking = [r.code for r, k in zip(resolved, kpis, strict=True) if k.delay_rate is None]
+        rates = [k.delay_rate for k in kpis]
+        lacking = [r.code for r, rate in zip(resolved, rates, strict=True) if rate is None]
 
         if lacking:
             message = f"not enough delay data to compare: {', '.join(lacking)}"
 
             return ToolResult.failure(self.name, ErrorKind.INSUFFICIENT_DATA, message)
 
-        return self._result(resolved, kpis)
+        known = [round(rate, RATIO_DIGITS) for rate in rates if rate is not None]
 
-    def _result(self, resolved: list[Resolved], kpis: list[AirportKpis]) -> ToolResult:
-        rates = [round(k.delay_rate or 0.0, RATIO_DIGITS) for k in kpis]
+        return self._result(resolved, kpis, known)
+
+    def _result(
+        self, resolved: list[Resolved], kpis: list[AirportKpis], rates: list[float]
+    ) -> ToolResult:
         gap = round(abs(rates[0] - rates[1]), RATIO_DIGITS)
         worse = None if gap == 0 else resolved[rates.index(max(rates))].code
 
@@ -107,12 +111,13 @@ class CompareCongestionTool:
             assumptions=[
                 *(a for r in resolved for a in r.assumptions),
                 "Congestion is measured by the share of operated flights departing 15+ minutes "
-                "late over each airport's newest months, up to 12; load factor is context only.",
+                f"late over each airport's newest run of up to {YEAR} consecutive months; load "
+                "factor is context only. Rates within 0.01 percentage points count as equal.",
             ],
             caveats=[
                 PROXY_CAVEAT,
                 NOT_ONLY_CONGESTION,
-                *_window_caveat(self._data, resolved),
+                *_window_caveats(resolved, kpis),
                 *data_caveats(self._data),
             ],
             sources=self._data.sources(),

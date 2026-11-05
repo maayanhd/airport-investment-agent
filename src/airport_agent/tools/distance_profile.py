@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 from airport_agent.dataset import Dataset
 from airport_agent.display import miles
+from airport_agent.kpis import YEAR
 from airport_agent.tools.common import (
     Resolved,
     airport_ref,
@@ -65,7 +66,7 @@ class DistanceProfileTool:
             assumptions=[
                 *resolved.assumptions,
                 f"Long-haul means flights of {threshold:,.0f} miles or more (config.yaml); "
-                "the average is weighted by departures over the last 12 months.",
+                f"the average is weighted by departures over the newest {YEAR} consecutive months.",
             ],
             caveats=[NOT_A_SHARE, *data_caveats(self._data)],
             sources=self._data.sources(),

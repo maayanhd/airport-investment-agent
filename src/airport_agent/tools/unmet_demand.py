@@ -36,7 +36,7 @@ def _signal(component: Component, threshold: float) -> dict[str, object]:
         "name": component.name,
         "label": LABELS[component.name],
         "value": round(component.value, RATIO_DIGITS),
-        "shown": FORMATS[component.name](component.value),
+        "shown": FORMATS[component.name](round(component.value, RATIO_DIGITS)),
         "strong": component.scaled >= threshold,
     }
 
@@ -78,7 +78,8 @@ class UnmetDemandTool:
                 "airport": airport_ref(self._data, resolved.code),
                 "signals": signals,
                 "strong_signals": sum(bool(s["strong"]) for s in signals),
-                "total_signals": len(signals),
+                "available_signals": len(signals),
+                "total_signals": len(self._data.settings.score_weights),
                 "missing": list(result.missing),
                 "seat_growth": metric(kpis.seat_growth, growth),
                 "traffic_through": month(kpis.traffic_through),

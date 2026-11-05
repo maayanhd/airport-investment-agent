@@ -19,7 +19,7 @@ def test_each_signal_is_marked_strong_or_not_from_the_fixed_range(dataset: Datas
     assert result.ok
     assert [s["name"] for s in signals] == list(COMPONENTS)
     assert result.data["strong_signals"] == sum(s["strong"] for s in signals)
-    assert result.data["total_signals"] == len(signals)
+    assert result.data["available_signals"] == len(signals) == result.data["total_signals"]
     assert {s["name"]: s["strong"] for s in signals}["load_factor"]
 
 
@@ -42,7 +42,7 @@ def test_a_partial_signal_set_is_flagged_and_lists_what_is_missing(dataset: Data
 
     assert result.ok
     assert result.data["missing"] == ["delay_pressure"]
-    assert result.data["total_signals"] == 3
+    assert (result.data["available_signals"], result.data["total_signals"]) == (3, 4)
     assert any("built from" in line for line in result.caveats)
 
 

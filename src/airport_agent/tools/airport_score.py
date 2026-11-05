@@ -5,6 +5,7 @@ from airport_agent.display import FORMATS, LABELS, describe_scoring
 from airport_agent.scoring import AirportScore
 from airport_agent.tools.common import (
     PROXY_CAVEAT,
+    RATIO_DIGITS,
     Resolved,
     airport_ref,
     data_caveats,
@@ -30,8 +31,8 @@ def _components(result: AirportScore) -> list[dict[str, object]]:
         {
             "name": c.name,
             "label": LABELS[c.name],
-            "value": round(c.value, 4),
-            "shown": FORMATS[c.name](c.value),
+            "value": round(c.value, RATIO_DIGITS),
+            "shown": FORMATS[c.name](round(c.value, RATIO_DIGITS)),
             "scaled": round(c.scaled, 2),
             "weight": c.weight,
             "points": round(c.points, 1),

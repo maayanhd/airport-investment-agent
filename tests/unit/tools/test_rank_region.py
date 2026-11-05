@@ -83,7 +83,23 @@ def test_nothing_is_reported_missing_when_every_partial_airport_is_shown(dataset
     assert not any("not shown" in line for line in result.caveats)
 
 
-def test_a_state_code_that_is_also_a_nickname_points_to_the_airport_names(dataset: Dataset) -> None:
+def test_a_state_code_that_is_also_a_nickname_is_not_read_as_a_state(dataset: Dataset) -> None:
     result = _rank(dataset, "LA")
 
-    assert "name its airports instead" in result.assumptions[0]
+    assert result.error is not None
+    assert result.error.kind is ErrorKind.BAD_ARGUMENTS
+    assert "state LA" in result.error.message
+
+
+def test_the_explicit_state_form_works_for_a_nickname(dataset: Dataset) -> None:
+    result = _rank(dataset, "state LA")
+
+    assert {r["airport"]["state"] for r in result.data["ranking"]} == {"LA"}
+
+
+def test_a_cut_list_says_how_many_airports_are_not_shown(dataset: Dataset) -> None:
+    result = _rank(dataset, "New England", top_n=3)
+
+    assert any(
+        line.startswith("11 more scored airports are not shown: ") for line in result.caveats
+    )

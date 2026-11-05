@@ -26,6 +26,7 @@ class AirportKpis:
     delay_rate: float | None  # share of operated flights departing 15+ minutes late
     cancel_rate: float | None
     avg_delay_minutes: float | None  # per operated flight
+    delay_months: int = 0  # length of the newest consecutive run the delay KPIs are built from
 
 
 def _index(month: date) -> int:
@@ -113,4 +114,5 @@ def compute_kpis(
         delays_through=max((r.month for r in delays), default=None),
         **_traffic_kpis(traffic),
         **_delay_kpis(delays, min_delay_months),
+        delay_months=len(_run(delays, YEAR)),
     )

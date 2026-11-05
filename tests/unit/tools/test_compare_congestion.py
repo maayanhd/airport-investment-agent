@@ -83,3 +83,30 @@ def test_equal_windows_need_no_caveat(dataset: Dataset) -> None:
     caveats = " ".join(_compare(dataset, "SFO", "ANC").caveats)
 
     assert "different numbers of delay months" not in caveats
+
+
+def _with_anc_delays(dataset: Dataset, rows: list[MonthlyDelays]) -> Dataset:
+    assert dataset.delays is not None
+    series = {c: dataset.delays.series(c) for c in dataset.settings.coverage_airports}
+    series["ANC"] = rows
+    changed = History(series, dataset.delays.provenance, series, min_months=9)
+
+    return dataclasses.replace(dataset, delays=changed)
+
+
+def test_the_months_used_are_the_newest_consecutive_run_not_all_rows(dataset: Dataset) -> None:
+    assert dataset.delays is not None
+    rows = dataset.delays.series("ANC")
+    gapped = _with_anc_delays(dataset, [*rows[:3], *rows[-10:]])  # months 4-? missing: a gap
+    result = _compare(gapped, "SFO", "ANC")
+    months = {r["airport"]["iata"]: r["delay_months"] for r in result.data["airports"]}
+
+    assert months["ANC"] == 10
+
+
+def test_delay_data_ending_in_different_months_is_called_out(dataset: Dataset) -> None:
+    assert dataset.delays is not None
+    older = _with_anc_delays(dataset, dataset.delays.series("ANC")[:-1])
+    result = _compare(older, "SFO", "ANC")
+
+    assert any("ends in different months" in line for line in result.caveats)

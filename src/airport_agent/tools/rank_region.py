@@ -27,15 +27,25 @@ class RankArgs(BaseModel):
     top_n: int = Field(default=5, ge=1, le=20, description="How many airports to return.")
 
 
+STATE_PREFIX = "state "
+
+
 def _states(settings: Settings, region: str) -> list[str] | None:
-    named = settings.regions.get(" ".join(search_words(region)))
+    """A configured region, or a state code. A code that is also a nickname ("LA") needs the
+    explicit form "state LA", so it is never read as a state by accident."""
+    key = " ".join(search_words(region))
+    named = settings.regions.get(key)
 
     if named:
         return named
 
-    code = region.strip().upper()
+    explicit = key.startswith(STATE_PREFIX)
+    code = key.removeprefix(STATE_PREFIX).upper()
 
-    return [code] if re.fullmatch(STATE_PATTERN, code) else None
+    if not re.fullmatch(STATE_PATTERN, code) or (key in settings.airport_aliases and not explicit):
+        return None
+
+    return [code]
 
 
 ORDER_RULE = (
@@ -54,22 +64,24 @@ def _row(data: Dataset, position: int, score: AirportScore) -> dict[str, object]
     }
 
 
-def _omitted_partial(data: Dataset, hidden: list[AirportScore]) -> list[str]:
-    """Partial scores that fell below the cut, so a strong candidate is not dropped silently."""
-    return [
+def _omitted(hidden: list[AirportScore]) -> list[str]:
+    """What fell below the cut, so a strong candidate is not dropped silently."""
+    if not hidden:
+        return []
+
+    partial = [
         f"{s.iata} (score {s.score:.1f}, confidence {s.confidence:.0%}) is not shown: it has "
         "partial data and is ranked after every complete score."
         for s in hidden
         if s.missing
     ]
+    codes = ", ".join(s.iata for s in hidden)
+
+    return [f"{len(hidden)} more scored airports are not shown: {codes}.", *partial]
 
 
 def _assumptions(data: Dataset, region: str, states: list[str]) -> list[str]:
     reading = f"Region {region!r} is the states {', '.join(states)}."
-    aliases = data.settings.airport_aliases
-
-    if " ".join(search_words(region)) in aliases:
-        reading += f" For the metro area {region!r}, name its airports instead."
 
     return [reading, ORDER_RULE, *describe_scoring(data.settings)]
 
@@ -93,7 +105,8 @@ class RankRegionTool:
             return ToolResult.failure(
                 self.name,
                 ErrorKind.BAD_ARGUMENTS,
-                f"unknown region {args.region!r}; use a state code or one of the listed regions",
+                f"unknown region {args.region!r}; use a state code (for a nickname like LA, write "
+                "'state LA') or one of the listed regions",
                 list(self._data.settings.regions),
             )
 
@@ -140,7 +153,7 @@ class RankRegionTool:
             caveats=[
                 PROXY_CAVEAT,
                 *partial,
-                *_omitted_partial(self._data, scored[args.top_n :]),
+                *_omitted(scored[args.top_n :]),
                 *data_caveats(self._data),
             ],
             sources=self._data.sources(),

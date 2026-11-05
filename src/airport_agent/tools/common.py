@@ -110,7 +110,9 @@ def metric(
     value: float | None, show: Callable[[float], str], digits: int = RATIO_DIGITS
 ) -> dict[str, object] | None:
     """The number rounded once plus the text to quote, so the answer can match it exactly."""
-    return None if value is None else {"value": round(value, digits), "shown": show(value)}
+    rounded = None if value is None else round(value, digits)
+
+    return None if rounded is None else {"value": rounded, "shown": show(rounded)}
 
 
 def _why_missing(name: str, code: str, data: Dataset) -> str:
