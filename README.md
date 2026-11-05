@@ -65,7 +65,7 @@ Data, KPIs, scoring and name resolution are plain Python. The LLM picks a tool, 
 
 Every assumed reading is stated in the answer. A test checks that each covered airport can be reached by its own city name, so a coverage change cannot silently break lookup.
 
-**Run the chat** (needs `pip install -e ".[dev,app]"` and `ANTHROPIC_API_KEY` in the environment; the key is read from the environment only and is never logged or stored):
+**Run the chat** (needs `pip install -e ".[dev,app]"` and `ANTHROPIC_API_KEY` in the environment or in the repo's git-ignored `.env`; a variable already set in the shell wins over the file, and the key is never logged or stored):
 ```bash
 uvicorn airport_agent.api:app_from_environment --factory      # API on 127.0.0.1:8000
 streamlit run ui/app.py                                       # chat page on localhost:8501

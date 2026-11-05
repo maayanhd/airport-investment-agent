@@ -1,6 +1,7 @@
 import threading
 import time
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -215,7 +216,7 @@ def test_the_server_starts_from_the_environment(
 
 
 def test_the_server_refuses_to_start_without_a_key_before_loading_any_data(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     def must_not_load(*args: Any, **kwargs: Any) -> Dataset:
         raise AssertionError("the data was loaded before the key was checked")
@@ -224,4 +225,18 @@ def test_the_server_refuses_to_start_without_a_key_before_loading_any_data(
     monkeypatch.setattr(api_module, "load_dataset", must_not_load)
 
     with pytest.raises(MissingApiKeyError, match="ANTHROPIC_API_KEY"):
-        api_module.app_from_environment()
+        api_module.app_from_environment(tmp_path / "missing.env")
+
+
+def test_the_server_finds_the_key_in_an_env_file(
+    dataset: Dataset, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("ANTHROPIC_API_KEY=sk-from-file\n", encoding="utf-8")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(api_module, "HttpFetcher", offline_fetcher)
+
+    app = api_module.app_from_environment(env_file)
+    monkeypatch.delenv("ANTHROPIC_API_KEY")  # the loader wrote it into the real environment
+
+    assert TestClient(app).get("/health").json() == {"status": "ok"}

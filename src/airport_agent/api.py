@@ -4,6 +4,7 @@ No login: it is meant for one analyst or a demo on a trusted network (see the RE
 """
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
@@ -14,6 +15,7 @@ from airport_agent.config import DEFAULT_CONFIG_PATH, Settings, load_settings
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.dataset import Dataset, load_dataset
+from airport_agent.env_file import DEFAULT_ENV_PATH, load_env_file
 from airport_agent.llm import LlmClient
 from airport_agent.sessions import Session, SessionStore
 
@@ -92,11 +94,13 @@ def create_app(settings: Settings, data: Dataset, llm: LlmClient) -> FastAPI:
     return app
 
 
-def app_from_environment() -> FastAPI:
-    """`uvicorn airport_agent.api:app_from_environment --factory`. Needs ANTHROPIC_API_KEY."""
+def app_from_environment(env_path: Path = DEFAULT_ENV_PATH) -> FastAPI:
+    """`uvicorn airport_agent.api:app_from_environment --factory`. Needs ANTHROPIC_API_KEY, from
+    the environment or the repo's `.env` (a variable already set wins)."""
     from airport_agent.anthropic_client import AnthropicClient  # noqa: PLC0415
 
     logging.basicConfig(level=logging.INFO)
+    load_env_file(env_path)
 
     settings = load_settings()
     llm = AnthropicClient.from_settings(settings)  # fails at once when the key is missing
