@@ -21,6 +21,8 @@ class Settings(BaseModel):
     score_weights: dict[str, float]
     score_bounds: dict[str, tuple[float, float]]
     min_confidence: float = Field(ge=0, le=1)
+    max_plain_count: int = Field(ge=0)
+    year_range: tuple[int, int]
     router_model: str
     judge_model: str
     coverage_airports: list[str]

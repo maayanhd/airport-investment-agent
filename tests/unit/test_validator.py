@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from airport_agent.dataset import Dataset
 from airport_agent.domain import DataMode, Provenance
@@ -9,7 +11,8 @@ from airport_agent.tools import build_registry
 from airport_agent.tools.result import ToolResult
 from airport_agent.validator import ViolationKind, gather_evidence, validate_answer
 
-COVERAGE = {"BOS", "SFO", "ANC", "JFK", "LAX"}
+COVERAGE = {"BOS", "SFO", "ANC", "JFK", "LAX", "SEA"}
+RULES: dict[str, Any] = {"max_plain_count": 10, "years": (1990, 2099)}
 
 
 def _result(**fields: Any) -> ToolResult:
@@ -19,7 +22,7 @@ def _result(**fields: Any) -> ToolResult:
 def _check(answer: str, *results: ToolResult, question: str = "") -> list[str]:
     evidence = gather_evidence(results, question)
 
-    return [v.text for v in validate_answer(answer, evidence, coverage=COVERAGE)]
+    return [v.text for v in validate_answer(answer, evidence, coverage=COVERAGE, **RULES)]
 
 
 DATA = _result(
@@ -57,7 +60,7 @@ def test_numbers_copied_from_a_tool_result_pass(answer: str) -> None:
         ("Delays are 30.1% worse.", ["30.1%"]),
         ("The score is 63.", ["63"]),
         ("Average distance is 1,900 miles.", ["1,900 miles"]),
-        ("It carries 12 million passengers.", ["12"]),
+        ("It carries 12 million passengers.", ["12 million"]),
     ],
 )
 def test_numbers_not_in_any_result_are_flagged(answer: str, bad: list[str]) -> None:
@@ -127,7 +130,7 @@ def test_airport_codes_in_options_and_the_question_are_allowed() -> None:
 
     assert _check("JFK, LAX or SFO?", options) == ["SFO"]
     assert _check("JFK, LAX or SFO?", options, question="and SFO?") == []
-    assert _check("You asked about BOS.", DATA, question="how is bos doing") == []
+    assert _check("You asked about BOS.", DATA, question="how is BOS doing") == []
 
 
 def test_ordinary_capitalised_words_are_not_airports() -> None:
@@ -136,7 +139,9 @@ def test_ordinary_capitalised_words_are_not_airports() -> None:
 
 def test_violations_say_what_kind_they_are() -> None:
     evidence = gather_evidence([DATA])
-    kinds = {v.kind for v in validate_answer("JFK has 99.9%.", evidence, coverage=COVERAGE)}
+    kinds = {
+        v.kind for v in validate_answer("JFK has 99.9%.", evidence, coverage=COVERAGE, **RULES)
+    }
 
     assert kinds == {ViolationKind.NUMBER, ViolationKind.AIRPORT}
 
@@ -150,7 +155,10 @@ def test_an_honest_answer_built_from_a_real_score_passes(dataset: Dataset) -> No
     )
     evidence = gather_evidence([result], "how is BOS?")
 
-    assert validate_answer(answer, evidence, coverage=dataset.settings.coverage_airports) == []
+    assert (
+        validate_answer(answer, evidence, coverage=dataset.settings.coverage_airports, **RULES)
+        == []
+    )
 
 
 def test_changing_one_digit_of_a_real_answer_is_caught(dataset: Dataset) -> None:
@@ -158,28 +166,85 @@ def test_changing_one_digit_of_a_real_answer_is_caught(dataset: Dataset) -> None
     wrong = f"BOS scores {result.data['score'] + 0.1:.1f}."
     evidence = gather_evidence([result])
 
-    found = validate_answer(wrong, evidence, coverage=dataset.settings.coverage_airports)
+    found = validate_answer(wrong, evidence, coverage=dataset.settings.coverage_airports, **RULES)
 
     assert [v.kind for v in found] == [ViolationKind.NUMBER]
 
 
 def test_every_covered_airport_can_quote_its_own_score(dataset: Dataset) -> None:
     registry = build_registry(dataset)
+    coverage = dataset.settings.coverage_airports
+    checked = 0
 
-    for code in dataset.settings.coverage_airports:
+    for code in coverage:
         result = registry.call("airport_score", {"airport": code})
-        quotes = [f"{code} scores {result.data['score']}"] if result.ok else []
-        evidence = gather_evidence([result], f"score {code}")
 
-        assert (
-            validate_answer(" ".join(quotes), evidence, coverage=dataset.settings.coverage_airports)
-            == []
-        )
+        if result.ok:
+            evidence = gather_evidence([result], f"score {code}")
+            answer = f"{code} scores {result.data['score']}"
+            checked += 1
+
+            assert validate_answer(answer, evidence, coverage=coverage, **RULES) == []
+
+    assert checked > 0.9 * len(coverage)
 
 
-def test_the_score_scale_can_be_quoted_because_the_tool_states_it(dataset: Dataset) -> None:
-    result = build_registry(dataset).call("airport_score", {"airport": "BOS"})
-    answer = f"BOS scores {result.data['score']} out of 100."
-    evidence = gather_evidence([result])
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "About a quarter of flights are late.",
+        "Roughly twelve million passengers.",
+        "Half of the airports are strong.",
+        "Delays doubled.",
+        "Hundreds of flights.",
+        "\u00bd of flights.",
+        "A third of airports.",
+    ],
+)
+def test_numbers_written_as_words_are_flagged(answer: str) -> None:
+    assert _check(answer, DATA) != []
 
-    assert validate_answer(answer, evidence, coverage=dataset.settings.coverage_airports) == []
+
+def test_small_number_words_and_ordinals_are_fine() -> None:
+    assert _check("The third busiest of the top five, one of two.", DATA) == []
+
+
+def test_a_number_word_the_question_used_may_be_repeated() -> None:
+    assert _check("Yes, about half.", DATA, question="is it about half?") == []
+
+
+def test_a_year_is_exempt_only_in_a_year_position() -> None:
+    assert _check("Growth since 2024 was strong.", DATA) == []
+    assert _check("It handles 2024 flights.", DATA) == ["2024"]
+
+
+def test_a_negative_value_can_be_quoted_with_or_without_its_sign() -> None:
+    result = _result(data={"gap": -0.031})
+
+    assert _check("The gap is -0.031.", result) == []
+    assert _check("The gap is 0.031.", result) == []
+
+
+def test_a_fraction_can_be_quoted_as_a_percent() -> None:
+    result = _result(data={"confidence": 0.85})
+
+    assert _check("Confidence is 85%.", result) == []
+    assert _check("Confidence is 86%.", result) == ["86%"]
+
+
+def test_airport_codes_used_as_keys_count_as_mentioned() -> None:
+    result = _result(data={"BOS": {"x": 1}, "SFO": {"x": 2}})
+
+    assert _check("BOS grew faster than SFO.", result) == []
+
+
+def test_only_codes_written_in_capitals_in_the_question_are_allowed() -> None:
+    assert _check("SEA is strong.", DATA, question="airports near the sea") == ["SEA"]
+    assert _check("SEA is strong.", DATA, question="how is SEA?") == []
+
+
+@given(st.text())
+def test_any_answer_gives_a_list_and_never_raises(answer: str) -> None:
+    evidence = gather_evidence([DATA], "question")
+
+    assert isinstance(validate_answer(answer, evidence, coverage=COVERAGE, **RULES), list)

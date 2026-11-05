@@ -1,7 +1,8 @@
 """Checks an answer against the tool results it was written from. Pure: no I/O, no model.
 
 The rule: every number and every covered airport code in the answer must appear in a tool result
-(or in the question). Dates, years, ordinals and plain counts up to 10 are exempt.
+(or in the question). Dates, years in a year position, ordinals and plain counts are exempt.
+What it cannot check: which airport a number belongs to, and airports named without their code.
 """
 
 import re
@@ -9,23 +10,32 @@ from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
 
 from airport_agent.tools.result import ToolResult
 
-MAX_PLAIN_COUNT = 10  # "top 3", "2 of 4 signals"
-YEARS = (1990, 2099)
 DATES = re.compile(
     r"\b\d{4}-\d{2}(?:-\d{2})?\b"
     r"|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{4}\b"
     r"|\b\d+(?:st|nd|rd|th)\b"
 )
+UNITS = (
+    r"percentage points?|percent|per cent|pp|pts?|points?|miles?|minutes?|min|hours?|days?|"
+    r"years?|million|billion|thousand"
+)
 NUMBER = re.compile(
     r"(?<![\w.])(?P<number>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
-    r"(?P<unit>%|\s?(?:pts?|points|miles|minutes|min)\b)?"
+    rf"(?P<unit>\s?%|\s?(?:{UNITS})\b|[MKB]\b)?"
 )
+NUMBER_WORDS = re.compile(
+    r"(?<!\d )(?<!\d)\b(?:eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+    r"nineteen|twenty|"
+    r"thirty|forty|fifty|sixty|seventy|eighty|ninety|dozens?|hundreds?|thousands?|millions?|"
+    r"billions?|half|halves|quarters?|(?:a|one|two) thirds?|double[sd]?|doubling|triple[sd]?|"
+    r"tripling|twice)\b|[\u00bd\u00bc\u00be\u2153\u2154]",
+    re.IGNORECASE,
+)
+YEAR_POSITION = re.compile(r"\b(?:in|since|from|through|until|by|during|of|to|for)\s$", re.I)
 CODE = re.compile(r"\b[A-Z]{3}\b")
-WORD3 = re.compile(r"\b[A-Za-z]{3}\b")
 
 
 class ViolationKind(StrEnum):
@@ -39,29 +49,24 @@ class Violation:
     text: str  # as written in the answer
 
 
-def _strings(node: Any) -> Iterator[str]:
-    if isinstance(node, str):
-        yield node
-    elif isinstance(node, dict):
-        for value in node.values():
-            yield from _strings(value)
+@dataclass(frozen=True)
+class Evidence:
+    numbers: frozenset[Decimal]
+    words: frozenset[str]  # number words such as "half" that a result or the question used
+    codes: frozenset[str]
+
+
+def _walk(node: object) -> Iterator[object]:
+    """Every key and leaf of nested dicts and lists."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            yield from _walk(value)
     elif isinstance(node, list):
         for value in node:
-            yield from _strings(value)
-
-
-def _leaves(node: Any) -> Iterator[int | float]:
-    if isinstance(node, bool):
-        return
-
-    if isinstance(node, int | float):
+            yield from _walk(value)
+    else:
         yield node
-    elif isinstance(node, dict):
-        for value in node.values():
-            yield from _leaves(value)
-    elif isinstance(node, list):
-        for value in node:
-            yield from _leaves(value)
 
 
 def _decimal(text: str) -> Decimal:
@@ -73,39 +78,61 @@ def _numbers(text: str) -> Iterator[tuple[Decimal, re.Match[str]]]:
         yield _decimal(match["number"]), match
 
 
-def _is_exempt(number: Decimal, match: re.Match[str]) -> bool:
-    plain = not match["unit"] and not re.search(r"[.,]", match["number"])
+def _quotable(value: float) -> Iterator[Decimal]:
+    """Signs are ignored, and a fraction may be quoted as a percent (0.85 as 85%)."""
+    number = abs(_decimal(str(value)))
 
-    return plain and (0 <= number <= MAX_PLAIN_COUNT or YEARS[0] <= number <= YEARS[1])
+    yield number
 
-
-@dataclass(frozen=True)
-class Evidence:
-    numbers: frozenset[Decimal]
-    codes: frozenset[str]
+    if number <= 1:
+        yield (number * 100).normalize()
 
 
 def gather_evidence(results: Sequence[ToolResult], question: str = "") -> Evidence:
     """Provenance timestamps are left out: their digits would legitimise unrelated numbers."""
-    dumped = [r.model_dump(mode="json", exclude={"sources"}) for r in results]
-    texts = [text for d in dumped for text in _strings(d)]
-    numbers = {_decimal(str(v)) for d in dumped for v in _leaves(d)}
+    leaves = list(_walk([r.model_dump(mode="json", exclude={"sources"}) for r in results]))
+    texts = [leaf for leaf in leaves if isinstance(leaf, str)]
+    values = [
+        leaf for leaf in leaves if isinstance(leaf, int | float) and not isinstance(leaf, bool)
+    ]
+    numbers = {n for value in values for n in _quotable(value)}
     numbers |= {n for text in [*texts, question] for n, _ in _numbers(text)}
-    codes = {c for text in texts for c in CODE.findall(text)}
-    codes |= {w.upper() for w in WORD3.findall(question)}
+    words = {m.group(0).lower() for text in [*texts, question] for m in NUMBER_WORDS.finditer(text)}
+    codes = {c for text in [*texts, question] for c in CODE.findall(text)}
 
-    return Evidence(frozenset(numbers), frozenset(codes))
+    return Evidence(frozenset(numbers), frozenset(words), frozenset(codes))
+
+
+def _is_exempt(
+    number: Decimal, match: re.Match[str], max_plain_count: int, years: tuple[int, int]
+) -> bool:
+    if match["unit"] or re.search(r"[.,]", match["number"]):
+        return False
+
+    in_year_position = YEAR_POSITION.search(match.string[: match.start()]) is not None
+
+    return 0 <= number <= max_plain_count or (in_year_position and years[0] <= number <= years[1])
 
 
 def validate_answer(
-    answer: str, evidence: Evidence, *, coverage: Collection[str]
+    answer: str,
+    evidence: Evidence,
+    *,
+    coverage: Collection[str],
+    max_plain_count: int,
+    years: tuple[int, int],
 ) -> list[Violation]:
-    """Numbers and covered airport codes in `answer` that no tool result or question supports."""
-    found = [
+    """Numbers, number words and covered airport codes that no tool result or question supports."""
+    numbers = [
         Violation(ViolationKind.NUMBER, match.group(0).strip())
         for number, match in _numbers(answer)
-        if number not in evidence.numbers and not _is_exempt(number, match)
+        if number not in evidence.numbers and not _is_exempt(number, match, max_plain_count, years)
     ]
-    unknown = sorted({c for c in CODE.findall(answer) if c in coverage and c not in evidence.codes})
+    words = [
+        Violation(ViolationKind.NUMBER, match.group(0))
+        for match in NUMBER_WORDS.finditer(answer)
+        if match.group(0).lower() not in evidence.words
+    ]
+    codes = sorted({c for c in CODE.findall(answer) if c in coverage and c not in evidence.codes})
 
-    return [*found, *(Violation(ViolationKind.AIRPORT, code) for code in unknown)]
+    return [*numbers, *words, *(Violation(ViolationKind.AIRPORT, code) for code in codes)]

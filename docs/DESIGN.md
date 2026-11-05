@@ -1,6 +1,6 @@
 # Design
 
-> Status: KPIs, scoring, the tool registry and the first tool (`airport_score`) are done. The other tools, the LLM layer and the answer validator are not. Parts marked _TBD_ get filled in as milestones land. The README holds the longer reasoning log.
+> Status: KPIs, scoring, the tool registry, all five tools and the answer validator are done. The LLM layer is not. Parts marked _TBD_ get filled in as milestones land. The README holds the longer reasoning log.
 
 ## 1. Scoring methodology
 
@@ -59,6 +59,6 @@ Without delay data, confidence would be 80%, the other three weights would be di
 
 - **The LLM does:** choose which tool to call and fill in its arguments, resolve follow-ups ("and BOS?") using conversation state, and write the explanation from tool output.
 - **The LLM never does:** produce a number or a rank, or call an API. Only tools call APIs, and a tool's only way in is a validated, named call.
-- **Guardrails:** a deterministic validator blocks any number or airport that isn't in the tool results (one retry, then abstain). Airport names from datasets are cleaned to plain characters, but that can't stop ordinary words that read like an instruction. So tool output is passed to the model as data under a system instruction not to follow it, and the validator is the backstop. _TBD: validator design._
+- **Guardrails:** a deterministic validator blocks any number or airport that isn't in the tool results (one retry, then abstain). Airport names from datasets are cleaned to plain characters, but that can't stop ordinary words that read like an instruction. So tool output is passed to the model as data under a system instruction not to follow it, and the validator is the backstop. The validator is plain code: every number (digits, number words above ten, fractions such as "a quarter") and every covered airport code in the answer must appear in a tool result or in the question. Matching is exact on the rounded values the tools return (a fraction may be quoted as a percent, signs are ignored). Dates, years after a preposition, ordinals and plain counts up to 10 are exempt. Known limits: it cannot tell which airport a number belongs to (SFO's 25.3% quoted for ANC passes), and it does not catch an airport named without its code. Both are covered by evals instead (M6).
 - **Models** (`config.yaml`): a Haiku-class router, escalated only if evals show a gap, and a Sonnet-class judge used offline only. _Measured results TBD (README section 6)._
 - **Build-time AI:** Claude Code with an eval agent and code-review skills. Details are in the README.
