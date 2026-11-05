@@ -5,12 +5,15 @@ from collections.abc import Iterable, Iterator, Sequence
 from airport_agent.evidence import owner_of
 from airport_agent.tools.result import ToolResult
 
-HIDDEN_KEYS = {"iata"}  # the airport's code is the label of its rows instead
+HIDDEN_KEYS = {"iata", "states"}  # the code labels rows; the states are noise
 
 
 def _lines(node: object, label: str) -> Iterator[str]:
     if isinstance(node, dict) and "shown" in node:
-        yield f"{label}: {node['shown']}"
+        name = node.get("name")
+        base = f"{label} / {name}" if isinstance(name, str) else label
+
+        yield f"{base}: {node['shown']}"
     elif isinstance(node, dict):
         owner = owner_of(node)
         base = f"{label} / {owner}" if owner and owner not in label else label
@@ -21,7 +24,7 @@ def _lines(node: object, label: str) -> Iterator[str]:
     elif isinstance(node, list):
         for value in node:
             yield from _lines(value, label)
-    elif node not in (None, ""):
+    elif node not in (None, "") and node is not True:  # "complete: True" is the usual case
         yield f"{label}: {node}"
 
 

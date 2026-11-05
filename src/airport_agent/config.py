@@ -23,6 +23,7 @@ class Settings(BaseModel):
     min_confidence: float = Field(ge=0, le=1)
     max_plain_count: int = Field(ge=0)
     max_tool_rounds: int = Field(ge=1)
+    congestion_tie_gap: float = Field(ge=0, lt=1)
     llm_max_tokens: int = Field(ge=64)
     llm_timeout_seconds: float = Field(gt=0)
     llm_retries: int = Field(ge=0)

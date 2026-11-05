@@ -96,7 +96,9 @@ class CompareCongestionTool:
         self, resolved: list[Resolved], kpis: list[AirportKpis], rates: list[float]
     ) -> ToolResult:
         gap = round(abs(rates[0] - rates[1]), RATIO_DIGITS)
-        worse = None if gap == 0 else resolved[rates.index(max(rates))].code
+        tie = self._data.settings.congestion_tie_gap
+        is_tie = gap <= tie
+        worse = None if is_tie else resolved[rates.index(max(rates))].code
 
         return ToolResult(
             tool=self.name,
@@ -106,13 +108,15 @@ class CompareCongestionTool:
                     _row(self._data, r.code, k) for r, k in zip(resolved, kpis, strict=True)
                 ],
                 "more_delayed": worse,
+                "no_meaningful_difference": is_tie,
                 "delay_rate_gap": metric(gap, points),
             },
             assumptions=[
                 *(a for r in resolved for a in r.assumptions),
                 "Congestion is measured by the share of operated flights departing 15+ minutes "
                 f"late over each airport's newest run of up to {YEAR} consecutive months; load "
-                "factor is context only. Rates within 0.01 percentage points count as equal.",
+                "factor is context only. "
+                f"Rates within {tie * 100:g} percentage points count as equal.",
             ],
             caveats=[
                 PROXY_CAVEAT,

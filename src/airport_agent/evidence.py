@@ -27,6 +27,7 @@ class Evidence:
     question: str  # the question as padded lower-case words, for phrase lookups
     scores: tuple[Mapping[str, float], ...] = ()  # like rankings, but the score itself
     text: str = ""  # every string a tool returned as padded lower-case words, for city lookups
+    tied: frozenset[frozenset[str]] = frozenset()  # airport pairs a tool called equal on delays
 
 
 @dataclass
@@ -41,6 +42,7 @@ class _Found:
     scores: list[dict[str, float]] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
     delay_order: set[tuple[str, str]] = field(default_factory=set)
+    tied: set[frozenset[str]] = field(default_factory=set)
 
     def add_number(self, value: Decimal, sign: int, owner: str | None) -> None:
         is_zero = value == 0  # zero has no sign; a sign nobody wrote (0) counts as positive
@@ -138,6 +140,10 @@ def _record_structure(node: dict[str, object], owner: str | None, found: _Found)
     if worse and other:
         found.delay_order.add((worse, other))
 
+    if node.get("no_meaningful_difference") is True:
+        pair = frozenset(owner_of(row) or "" for row in rows if isinstance(row, dict))
+        found.tied.add(pair)
+
 
 def _record(item: object, owner: str | None, found: _Found) -> None:
     if isinstance(item, dict):
@@ -179,4 +185,5 @@ def gather_evidence(results: Sequence[ToolResult], question: str = "") -> Eviden
         question=f" {' '.join(search_words(question))} ",
         scores=tuple(s for s in found.scores if s),
         text=f" {' '.join(search_words(' '.join(found.texts)))} ",
+        tied=frozenset(found.tied),
     )

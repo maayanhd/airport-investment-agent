@@ -124,9 +124,10 @@ def test_caveats_name_only_the_source_that_fell_back_to_a_snapshot(dataset: Data
 
     # The test fixture cannot reach BTS, so traffic fell back; catalog and delays are snapshots
     # by design and must not add a line.
-    assert len(caveats) == 2
-    assert "T-100" in caveats[1]
-    assert "snapshot used" in caveats[1]
+    assert len(caveats) == 3  # the proxy note, the size note, and the one fallen-back source
+    assert "does not measure airport size" in caveats[1]
+    assert "T-100" in caveats[2]
+    assert "snapshot used" in caveats[2]
 
 
 def test_a_partial_score_says_what_is_missing_and_why(dataset: Dataset) -> None:
@@ -173,3 +174,12 @@ def test_without_delay_data_every_airport_says_so(dataset: Dataset) -> None:
 
 def test_a_missing_traffic_component_is_explained_too(dataset: Dataset) -> None:
     assert "needs consecutive months of traffic" in _why_missing("load_factor", "BOS", dataset)
+
+
+def test_the_score_comes_with_the_airports_passengers_and_a_size_caveat(dataset: Dataset) -> None:
+    result = _call(dataset, "BOS")
+    volume = dataset.passenger_volume["BOS"]
+
+    assert result.data["passengers_12m"]["value"] == volume
+    assert result.data["passengers_12m"]["shown"].endswith(" million")
+    assert any("does not measure airport size" in c for c in result.caveats)

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -149,3 +151,14 @@ def test_the_request_budget_covers_every_call_timing_out_on_every_attempt() -> N
     )
 
     assert settings.request_budget_seconds == (4 + 1 + 1) * 30 * 2
+
+
+def test_every_setting_has_a_row_in_the_readme_table() -> None:
+    readme = (Path(__file__).parents[2] / "README.md").read_text(encoding="utf-8")
+
+    rows = [line for line in readme.splitlines() if line.startswith("|")]
+    missing = [
+        key for key in load_settings().model_dump() if not any(f"`{key}`" in row for row in rows)
+    ]
+
+    assert missing == []

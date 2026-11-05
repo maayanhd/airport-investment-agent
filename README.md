@@ -37,6 +37,42 @@ How the data layer behaves (`data/`):
 
 OurAirports limits: only US airports of type large, medium or small are kept (heliports, seaplane bases and closed fields are dropped). IATA codes aren't unique worldwide (a small Argentine airport also uses BOS), so the country filter is required. The file is community-maintained with no release date, so its `as_of` is the month we fetched it.
 
+### Every setting
+All tunable values live in `config.yaml`, with a comment there. This table says what each one does and what it affects; a test fails if a key is added without a row here.
+
+| Key | Now | What it does |
+|---|---|---|
+| `long_haul_min_miles` | 1500 | A flight at or above this average distance counts as long-haul in `distance_profile`. |
+| `congestion_tie_gap` | 0.005 | Two delay rates closer than this (0.5 percentage points) are called equal; `compare_congestion` names no winner. |
+| `regions` | New England | Named groups of states `rank_region` understands. Any two-letter state code also works. |
+| `strong_signal_scaled` | 0.5 | A score component at or above this share of its range is called a strong signal in `unmet_demand`. |
+| `score_weights` | 0.3 / 0.3 / 0.2 / 0.2 | Weight of passenger growth, load factor, delay pressure and capacity gap. Must sum to 1. |
+| `score_bounds` | see section 5 | The value that scores 0 and the value that scores 1 for each component. Fixed, so a score never depends on which airports are compared. |
+| `min_confidence` | 0.6 | Below this share of the score weight with data, no score is given. |
+| `max_plain_count` | 10 | Validator: a plain whole number up to this ("top 3") needs no source. |
+| `year_range` | 1990-2099 | Validator: a number in this range after "in", "since" and similar words is a year, not a figure. |
+| `snapshot_dir` | data/snapshots | Where the committed data snapshots live. |
+| `max_data_age_months` | 6 | Data older than this is flagged stale in the answer. |
+| `traffic_history_months` | 30 | Months of BTS traffic requested; BTS lags 3-4 months, so about 26 arrive. |
+| `traffic_min_months` | 24 | Months of traffic an airport needs for growth figures (last 12 against the 12 before). |
+| `delays_months` | 12 | Months of On-Time data downloaded by `data refresh delays`. |
+| `delays_min_months` | 9 | Months of delay data an airport needs for a delay figure. |
+| `min_airport_share` | 0.9 | Share of covered airports a live download must contain before it replaces a snapshot. |
+| `max_name_candidates` | 8 | A name matching more airports than this gets "be more specific" instead of a list. |
+| `airport_aliases` | metro names | Nicknames the data cannot know ("LA", "NYC", "Bay Area"); the first code is the default reading. |
+| `coverage_airports` | 97 | The airports the agent knows. Anything else is "not covered". |
+| `router_model`, `judge_model` | Haiku, Sonnet | The agent loop's model, and the model that will judge answers offline. |
+| `max_tool_rounds` | 4 | Tool-calling rounds per question before the model must answer. |
+| `validation_retries` | 1 | Rewrites the model gets after the validator rejects a draft. |
+| `history_turns` | 6 | Earlier turns kept so "and BOS?" can be resolved. |
+| `remembered_airports` | 8 | Airports named in the follow-up hint about the last turn. |
+| `fallback_max_lines` | 40 | Lines of raw tool figures shown when no wording could be verified. |
+| `llm_max_tokens` | 1024 | Longest model reply; a longer one is treated as cut off and never shown. |
+| `llm_timeout_seconds`, `llm_retries` | 30, 1 | Per model call. Together with `max_tool_rounds` they set the page's wait time. |
+| `session_ttl_minutes`, `max_sessions` | 60, 200 | An idle conversation is forgotten after the first; past the second, the least recently used goes. |
+| `max_message_chars` | 2000 | Longest question the API accepts. |
+| `eval_thresholds` | per metric | A metric below its threshold fails `python -m evals.run`. |
+
 ## 3. Risk and what happens when the system is wrong
 Being wrong with confidence is worse than abstaining.
 
@@ -97,7 +133,7 @@ Why these choices:
 
 **Assumptions behind the four question types** (each is also stated in the answer):
 - *Region:* a region is a configured name ("New England") or a state code. A code that is also a nickname ("LA") is read as the city, not the state; Louisiana needs "state LA".
-- *Congestion comparison:* the metric is the delay rate over each airport's newest run of up to 12 consecutive months. The two airports may cover different months, so the answer flags a different length or end month. Rates that agree at the shown precision (0.01 percentage points) are called equal.
+- *Congestion comparison:* the metric is the delay rate over each airport's newest run of up to 12 consecutive months. The two airports may cover different months, so the answer flags a different length or end month. Rates within `congestion_tie_gap` (0.5 percentage points) are called equal.
 - *Share of traffic:* only average flight distance is available, not a long-haul share. The answer says so and gives the average with the long-haul threshold from `config.yaml`.
 - *Unmet demand:* a signal is "strong" when its scaled value passes a threshold from `config.yaml`. If a signal has no data, the answer reads "3 of 4" and names the missing one.
 
@@ -169,18 +205,48 @@ Code:
 - **Small helpers instead of long parsers.** `parse_traffic` reads, rejects truncation, groups, then checks coverage in four named steps (`history.py` holds the checks shared with the delays adapter). CLAUDE.md sets 20 lines as the target and about 30 as the point to split. That's a review convention; ruff only enforces complexity and argument count.
 
 ## 9. Limitations and failure cases
-_TBD_: foreign-language questions, stale or missing data, small airports, weak proxies, a small eval set.
+These are the known ways the answers can be wrong or unhelpful. Each says whether it is handled, shown to the user, or left open.
 
-Known so far:
-- **The score doesn't know airport size.** +17% growth at a small airport counts the same as +17% at a hub, and a short list can be full of small airports. Passenger volume should sit next to the score before this goes in front of an investor.
-- **Some components saturate.** Several airports sit at the top of the range on passenger growth or capacity gap, so those rows can't separate them. A test fails if more than 15% of airports sit at either end of a range, so the bounds get re-checked after each refresh.
+**About the score**
+- **The score is a heuristic, not a forecast.** It is built from public traffic and delay data with explained weights. Nobody has checked it against real expansion projects, so it should be read as a screening aid. A backtest is the main missing piece of evidence.
+- **The score doesn't know airport size.** +17% growth at a small airport counts the same as +17% at a hub, and a short list can be full of small airports (Bethel tops Alaska, Portsmouth tops New England). Each ranked airport now shows its 12-month passengers and every score carries a size caveat, but size is still not part of the score.
+- **Some components saturate.** Several airports sit at the top of the range on passenger growth or capacity gap, so those rows can't separate them. A test fails if more than 15% of airports sit at either end of a range, so the bounds get re-checked after each refresh. The bounds were set from the 2026-11 data and need re-checking as the data moves.
 - **Delay pressure counts delays as demand.** That's the proxy design, and it means a congested airport scores higher.
+- **A small difference is not a winner.** Delay rates closer than `congestion_tie_gap` are called equal. Above it, a gap of a point or two still depends on weather and airline problems, which the caveat says.
+- **Unmet demand and congestion are proxies**, and the answer says so. Exact long-haul share needs route-level data that is not public through an API, so `distance_profile` gives an average distance and says it is not a share.
+
+**About the data**
+- **BTS lags by 2-4 months**, and On-Time covers only the airlines that report to BTS. The answer states the data month.
+- **Coverage is 97 airports.** A small airport outside the list is "not covered". Airports with too few months of delay data get a partial score (80% of the weight), marked as not comparable with complete ones, and rank after them.
 - **The catalog has no publication date**, only a fetch month.
 - **When live data is unavailable**, the answer comes from the last snapshot and says so.
 - **The OurAirports fixture** in `tests/fixtures/` is a real excerpt (dated in its README). It shows the parser handles the real format as of that date, and CI won't notice later upstream changes until the fixture is refreshed.
 
+**About the model and the validator**
+- **The validator checks numbers, airport codes and a few claim shapes, not meaning.** It can't tell which airport a number belongs to when two share a sentence, can't catch an airport named without its code, and doesn't check qualitative claims ("clearly the best"). The model can also state a wrong rule about the tools in words: in one test it said a ranking needs two airports, which isn't true. The prompt now tells it not to describe how the tools work, but that is a request, not a check.
+- **"Figures only" answers.** When the validator rejects the wording twice, the user sees the tools' raw figures with a notice. In a first manual chat test, 4 of 12 answers did this (and one was unavailable), and in a second test 0 of 7 did (one unavailable), so the rate is not yet known. The reasons are logged (`showed tool figures only: ...`). Measuring and lowering this rate is the point of the model-backed evals.
+- **One question failed repeatedly with "assistant unavailable"** ("Score Hyannis"). The tool result is fine, so the failure is on the model call. The suspected cause is a reply cut off at `llm_max_tokens`; the log line settles it and nothing has been changed on a guess.
+- **Prompt injection is only partly covered.** Airport names are cleaned to plain characters and tool output is passed as data under an instruction not to follow it, but ordinary words that read like an instruction can't be filtered out. The validator limits what can reach the user, not what the model reads.
+- **English only, and only the questions the five tools cover.** Others are declined.
+- **The evals are not model-backed yet.** The harness is proven with a stand-in model, the judge is not run, and the 40 questions are a small set.
+
 ## 10. At scale, monitoring and drift
-_TBD_
+This is what exists today and what a production deployment would need. Nothing here has been load-tested.
+
+**Scale**
+- **One process, one analyst.** Conversations live in memory, so a second server process or a restart loses them. The model is the slow and costly part: a question makes one to six model calls, each timing out at 30 s. The cost per question is not measured yet.
+- **To go beyond a demo:** shared session storage, a login with per-user limits, a request-size limit, a spending cap on the model key, and a container with pinned dependencies. None of these exist.
+
+**Monitoring**
+- **Today:** log lines for every abstention and "figures only" fallback, each with the rejected text patterns, the model-failure error, and the ledger of eval runs (`evals/ledger.jsonl`).
+- **Needed:** structured logs with a request id, and metrics for latency, tokens and cost per question, the share of answered / figures-only / abstained / unavailable replies, tool error rates, and the age of the data in use. Alerts on a rise in fallbacks or unavailable replies. An audit trail of questions and answers.
+
+**Drift**
+- **Data:** refreshing is manual (`data refresh`, about 16 minutes and 370 MB for delays). It should run on a schedule, with a check that fails loudly when BTS changes a column. The score bounds and the saturation test need re-running after each refresh. A server keeps the data it loaded at start-up.
+- **Model:** a new model version or a prompt change can shift tool choice and wording. The eval ledger records the prompt hash and the commit, so runs can be compared; a CI gate on model-backed evals does not exist yet.
+- **Score validity:** the weights and ranges are assumptions. They should be revisited against outcomes once there are any to compare with.
+
+**Other things a production system would still need:** a standing "screening aid, not financial advice" notice on the page, export with a human sign-off, and a feedback loop for analysts to flag wrong answers.
 
 ## Development
 ```bash

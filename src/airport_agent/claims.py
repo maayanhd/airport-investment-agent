@@ -145,6 +145,9 @@ def _than_problem(match: re.Match[str], evidence: Evidence) -> str | None:
         return None
 
     if is_delay:
+        if frozenset((first, second)) in evidence.tied:
+            return match.group(0)
+
         order = (first, second) if direction > 0 else (second, first)
         known = {(first, second), (second, first)} & evidence.delay_order
 

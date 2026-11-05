@@ -110,3 +110,29 @@ def test_delay_data_ending_in_different_months_is_called_out(dataset: Dataset) -
     result = _compare(older, "SFO", "ANC")
 
     assert any("ends in different months" in line for line in result.caveats)
+
+
+def test_la_and_santa_ana_do_not_offer_each_other_as_another_reading(dataset: Dataset) -> None:
+    result = _compare(dataset, "LA", "Santa Ana")
+    reading = next(a for a in result.assumptions if a.startswith('"LA" read as'))
+
+    assert "SNA" not in reading
+    assert "BUR" in reading
+
+
+def test_rates_closer_than_the_tie_gap_name_no_winner(dataset: Dataset) -> None:
+    close = dataset.settings.model_copy(update={"congestion_tie_gap": 0.5})
+    result = build_registry(dataclasses.replace(dataset, settings=close)).call(
+        "compare_congestion", {"airport_a": "SFO", "airport_b": "ANC"}
+    )
+
+    assert result.data["more_delayed"] is None
+    assert result.data["no_meaningful_difference"] is True
+    assert any("count as equal" in a for a in result.assumptions)
+
+
+def test_a_clear_gap_still_names_the_more_delayed_airport(dataset: Dataset) -> None:
+    result = _compare(dataset, "SFO", "ANC")
+
+    assert result.data["more_delayed"] == "SFO"
+    assert result.data["no_meaningful_difference"] is False

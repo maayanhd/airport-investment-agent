@@ -6,7 +6,7 @@ from hypothesis import strategies as st
 
 from airport_agent.config import Settings
 from airport_agent.dataset import Dataset
-from airport_agent.resolve import Match, Resolution, resolve_airport
+from airport_agent.resolve import Match, Resolution, resolve_airport, without_readings
 
 
 def _resolve(dataset: Dataset, query: str, volume: Mapping[str, int] | None = None) -> Resolution:
@@ -15,7 +15,7 @@ def _resolve(dataset: Dataset, query: str, volume: Mapping[str, int] | None = No
         dataset.catalog,
         dataset.settings.airport_aliases,
         max_candidates=dataset.settings.max_name_candidates,
-        volume=dataset.passenger_volume() if volume is None else volume,
+        volume=dataset.passenger_volume if volume is None else volume,
     )
 
 
@@ -165,3 +165,27 @@ def test_city_words_must_come_in_order(dataset: Dataset) -> None:
 
 def test_a_word_from_the_name_after_a_dash_finds_the_airport(dataset: Dataset) -> None:
     assert _resolve(dataset, "Tacoma").code == "SEA"
+
+
+def test_a_named_airport_is_not_an_other_reading_of_the_first(dataset: Dataset) -> None:
+    la = _resolve(dataset, "LA")
+
+    narrowed = without_readings(la, "LA", {"SNA"}, dataset.catalog)
+
+    assert "SNA" in la.alternatives
+    assert narrowed.alternatives == ("BUR", "LGB", "ONT")
+    assert "SNA" not in narrowed.note
+    assert narrowed.code == "LAX"
+
+
+def test_nothing_changes_when_no_other_reading_was_named(dataset: Dataset) -> None:
+    la = _resolve(dataset, "LA")
+
+    assert without_readings(la, "LA", {"JFK"}, dataset.catalog) is la
+    assert without_readings(la, "LA", set(), dataset.catalog) is la
+
+
+def test_only_a_resolved_reading_is_narrowed(dataset: Dataset) -> None:
+    ambiguous = _resolve(dataset, "Portland")
+
+    assert without_readings(ambiguous, "Portland", {"PDX"}, dataset.catalog) is ambiguous

@@ -1,7 +1,9 @@
 """Everything the tools read, loaded once so every answer in a conversation is consistent."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from functools import cached_property
 
 from airport_agent.config import Settings
 from airport_agent.data.catalog import OurAirportsCatalog, load_catalog
@@ -12,6 +14,8 @@ from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.data.traffic import TrafficHistory, load_traffic
 from airport_agent.domain import Provenance, search_words
 
+YEAR_MONTHS = 12
+
 
 @dataclass(frozen=True)
 class Dataset:
@@ -21,12 +25,16 @@ class Dataset:
     delays: DelayHistory | None  # None when no delay snapshot exists
     warnings: tuple[str, ...] = ()
 
-    def passenger_volume(self) -> dict[str, int]:
-        """Passengers in each airport's newest 12 months; only used to pick a default airport."""
-        return {
-            code: sum(m.passengers for m in self.traffic.series(code)[-12:])
-            for code in self.settings.coverage_airports
-        }
+    def passengers_12m(self, code: str) -> int | None:
+        """Passengers in the airport's newest 12 months, or None without a full year of data."""
+        year = self.traffic.series(code)[-YEAR_MONTHS:]
+
+        return sum(m.passengers for m in year) if len(year) == YEAR_MONTHS else None
+
+    @cached_property
+    def passenger_volume(self) -> Mapping[str, int]:
+        """Passengers per airport (0 when unknown); only used to pick a default airport."""
+        return {code: self.passengers_12m(code) or 0 for code in self.settings.coverage_airports}
 
     def city_codes(self) -> dict[str, frozenset[str]]:
         """Covered cities as lower-case words, with their airports, to catch a city named alone."""

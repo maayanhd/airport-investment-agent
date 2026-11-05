@@ -103,3 +103,13 @@ def test_a_cut_list_says_how_many_airports_are_not_shown(dataset: Dataset) -> No
     assert any(
         line.startswith("11 more scored airports are not shown: ") for line in result.caveats
     )
+
+
+def test_every_ranked_airport_shows_its_passengers_and_a_size_caveat(dataset: Dataset) -> None:
+    result = _rank(dataset, "New England", top_n=3)
+
+    for row in result.data["ranking"]:
+        assert row["passengers_12m"]["value"] > 0
+        assert row["passengers_12m"]["shown"]
+
+    assert any("does not measure airport size" in c for c in result.caveats)

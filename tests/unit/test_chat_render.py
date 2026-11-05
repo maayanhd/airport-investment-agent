@@ -2,9 +2,11 @@ import json
 
 import pytest
 
+from airport_agent.answer import Status
 from airport_agent.chat_models import NotesOut
 from airport_agent.chat_render import (
     GENERIC_ERROR,
+    STATUS_LABELS,
     escape_markdown,
     notes_markdown,
     reply_from_response,
@@ -50,7 +52,6 @@ def test_a_reply_without_a_session_keeps_the_page_on_its_current_one() -> None:
 
     assert reply.session_id is None
     assert not reply.reset_session
-    assert "could not be reached" in reply.label
 
 
 def test_a_good_reply_carries_the_text_notes_label_and_session() -> None:
@@ -100,3 +101,35 @@ def test_a_rejected_message_says_so_instead_of_blaming_the_server() -> None:
 def test_other_failures_are_plain_messages() -> None:
     assert "try again" in reply_from_response(500, "Traceback ...").text
     assert "Is the API running" in reply_from_response(0, "").text
+
+
+@pytest.mark.parametrize("status", ["unavailable", "abstained"])
+def test_a_reply_without_an_answer_shows_its_text_once_with_no_label_and_no_notes(
+    status: str,
+) -> None:
+    empty = {"assumptions": [], "caveats": [], "sources": []}
+    body = {
+        **BODY,
+        "status": status,
+        "text": "The assistant is unavailable.",
+        "notes": empty,
+    }
+
+    reply = reply_from_response(200, json.dumps(body))
+
+    assert reply.text == "The assistant is unavailable."
+    assert reply.label == ""
+    assert reply.notes == ""
+
+
+def test_an_answer_with_empty_notes_still_shows_all_three_sections() -> None:
+    empty = {"assumptions": [], "caveats": [], "sources": []}
+
+    shown = reply_from_response(200, json.dumps({**BODY, "notes": empty})).notes
+
+    assert "**Assumptions**\n- none" in shown
+    assert "**Data sources**\n- none" in shown
+
+
+def test_every_status_has_a_label() -> None:
+    assert set(STATUS_LABELS) == {s.value for s in Status}
