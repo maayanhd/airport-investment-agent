@@ -212,3 +212,105 @@ def test_a_refused_answer_is_remembered_without_its_rejected_drafts(dataset: Dat
 
     assert "99.9" not in shown
     assert "98.8" not in shown
+
+
+def test_after_the_last_tool_round_the_model_gets_no_tools_and_must_answer(
+    dataset: Dataset,
+) -> None:
+    rounds = dataset.settings.max_tool_rounds
+    llm = ScriptedLlm(
+        *[_call("airport_score", airport="BOS")] * rounds, _say(_score_text(dataset, "BOS"))
+    )
+
+    answer = _agent(dataset, llm).ask("How strong is BOS?")
+
+    assert answer.status is Status.ANSWERED
+    assert llm.calls[rounds - 1]["tools"] != []
+    assert llm.calls[rounds]["tools"] == []
+
+
+def test_two_tool_calls_in_one_reply_each_get_their_own_output(dataset: Dataset) -> None:
+    both = Message(
+        "assistant",
+        tool_calls=(
+            ToolCall("a", "airport_score", {"airport": "BOS"}),
+            ToolCall("b", "airport_score", {"airport": "SFO"}),
+        ),
+    )
+    llm = ScriptedLlm(both, _say(f"{_score_text(dataset, 'BOS')} {_score_text(dataset, 'SFO')}"))
+
+    answer = _agent(dataset, llm).ask("Score BOS and SFO")
+    outputs = llm.calls[1]["messages"][-1].tool_outputs
+
+    assert answer.status is Status.ANSWERED
+    assert [o.call_id for o in outputs] == ["a", "b"]
+    assert len(answer.results) == 2
+
+
+def test_a_model_failure_after_a_tool_call_leaves_no_half_turn(dataset: Dataset) -> None:
+    llm = ScriptedLlm(_call("airport_score", airport="BOS"), LlmError("down"), _say("Hello."))
+    agent = _agent(dataset, llm)
+
+    failed = agent.ask("How strong is BOS?")
+    agent.ask("hi")
+
+    assert failed.status is Status.UNAVAILABLE
+    assert [m.text for m in llm.calls[2]["messages"]] == ["hi"]
+
+
+def test_a_follow_up_without_tools_keeps_the_notes_of_the_data_it_drew_on(
+    dataset: Dataset,
+) -> None:
+    llm = ScriptedLlm(
+        _call("airport_score", airport="SFO"),
+        _say(_score_text(dataset, "SFO")),
+        _say(f"As before, {_score_text(dataset, 'SFO')}"),
+    )
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is SFO?")
+    answer = agent.ask("Say that again.")
+
+    assert any("congestion proxy" in c for c in answer.notes.caveats)
+    assert answer.results == ()
+
+
+def test_a_reply_that_used_no_data_says_so(dataset: Dataset) -> None:
+    answer = _agent(dataset, ScriptedLlm(_say("Hello! Ask me about an airport."))).ask("hi")
+
+    assert answer.notes.caveats == ("No data was looked up for this reply.",)
+
+
+def test_a_rejected_draft_and_its_feedback_are_forgotten_after_a_good_rewrite(
+    dataset: Dataset,
+) -> None:
+    llm = ScriptedLlm(
+        _call("airport_score", airport="BOS"),
+        _say("BOS scores 99.9."),
+        _say(_score_text(dataset, "BOS")),
+        _say("Hello."),
+    )
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is BOS?")
+    agent.ask("hi")
+    shown = " ".join(m.text for m in llm.calls[-1]["messages"])
+
+    assert "99.9" not in shown
+    assert _score_text(dataset, "BOS") in shown
+
+
+def test_the_follow_up_note_survives_a_turn_without_data(dataset: Dataset) -> None:
+    llm = ScriptedLlm(
+        _call("airport_score", airport="SFO"),
+        _say(_score_text(dataset, "SFO")),
+        _say("You're welcome."),
+        _say("Hello."),
+    )
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is SFO?")
+    agent.ask("thanks")
+    agent.ask("and BOS?")
+
+    assert "airports SFO" in llm.calls[-1]["system"]

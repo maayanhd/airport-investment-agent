@@ -22,6 +22,9 @@ class Notes:
     sources: tuple[str, ...] = ()
 
 
+NO_DATA = Notes(caveats=("No data was looked up for this reply.",))
+
+
 @dataclass(frozen=True)
 class Answer:
     status: Status

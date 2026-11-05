@@ -1,9 +1,11 @@
 """Text the model is given. Kept apart from the loop so the rules can be read in one place."""
 
+import re
 from collections.abc import Iterator, Sequence
 
+from airport_agent.domain import IATA_PATTERN, search_words
 from airport_agent.tools.result import ToolResult
-from airport_agent.validator import Violation
+from airport_agent.validator import Violation, ViolationKind
 
 MAX_REMEMBERED_AIRPORTS = 8
 SYSTEM_PROMPT = """\
@@ -33,6 +35,9 @@ UNAVAILABLE_TEXT = "The assistant is unavailable right now. Please try again in 
 
 
 def rejection_feedback(violations: Sequence[Violation]) -> str:
+    if all(v.kind is ViolationKind.EMPTY for v in violations):
+        return "Your reply was empty. Answer from the tool results, or call a tool."
+
     found = ", ".join(v.text for v in violations)
 
     return (
@@ -56,10 +61,12 @@ def _codes(node: object) -> Iterator[str]:
 
 
 def entities_note(results: Sequence[ToolResult]) -> str:
-    """What the previous turn was about, written by code, as a hint for follow-up questions."""
+    """What the last turn with data was about, written by code, as a hint for follow-ups.
+    Only well-formed codes and cleaned region words go in: this text sits in the system prompt."""
     tools = list(dict.fromkeys(r.tool for r in results if r.ok))
-    codes = list(dict.fromkeys(c for r in results for c in _codes(r.data)))
-    regions = [str(r.data["region"]) for r in results if "region" in r.data]
+    found = (c for r in results for c in _codes(r.data))
+    codes = list(dict.fromkeys(c for c in found if re.fullmatch(IATA_PATTERN, c)))
+    regions = [" ".join(search_words(str(r.data["region"]))) for r in results if "region" in r.data]
 
     if not tools:
         return ""

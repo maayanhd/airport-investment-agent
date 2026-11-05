@@ -4,7 +4,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 
-from airport_agent.answer import Answer, Status, build_notes
+from airport_agent.answer import NO_DATA, Answer, Status, build_notes
 from airport_agent.config import Settings
 from airport_agent.llm import LlmClient, LlmError, Message, ToolCall, ToolOutput
 from airport_agent.prompts import (
@@ -20,12 +20,17 @@ from airport_agent.validator import Violation, ViolationKind, gather_evidence, v
 
 logger = logging.getLogger(__name__)
 EMPTY_ANSWER = "(empty answer)"
+TOO_MANY_ROUNDS = "too many tool rounds"
 
 
 @dataclass
 class Turn:
     messages: list[Message]
     results: list[ToolResult] = field(default_factory=list)
+    rejected: set[int] = field(default_factory=set)  # ids of drafts and feedback not to remember
+
+    def remembered(self) -> list[Message]:
+        return [m for m in self.messages if id(m) not in self.rejected]
 
 
 class Agent:
@@ -35,6 +40,7 @@ class Agent:
         self._llm = llm
         self._registry = registry
         self._settings = settings
+        self._tools = registry.definitions()
         self._turns: deque[Turn] = deque(maxlen=settings.history_turns)
 
     def ask(self, question: str) -> Answer:
@@ -48,7 +54,7 @@ class Agent:
             return Answer(Status.UNAVAILABLE, UNAVAILABLE_TEXT)
 
         if answer.status is Status.ANSWERED:
-            self._turns.append(turn)
+            self._turns.append(Turn(turn.remembered(), turn.results))
         else:  # keep the question but never the rejected drafts
             self._turns.append(Turn([turn.messages[0], Message("assistant", text=answer.text)]))
 
@@ -59,38 +65,42 @@ class Agent:
         rejections = 0
 
         while True:
-            reply = self._llm.complete(
-                system=self._system(),
-                messages=[m for t in self._turns for m in t.messages] + turn.messages,
-                tools=self._registry.definitions(),
-            )
-            turn.messages.append(reply)
+            reply = self._next_reply(turn, with_tools=rounds < self._settings.max_tool_rounds)
 
             if reply.tool_calls:
+                if rounds >= self._settings.max_tool_rounds:
+                    return self._abstain((TOO_MANY_ROUNDS,))
+
                 rounds += 1
-
-                if rounds > self._settings.max_tool_rounds:
-                    return self._abstain(("too many tool rounds",))
-
                 turn.messages.append(self._run_tools(reply.tool_calls, turn))
                 continue
 
             violations = self._check(reply.text, turn, question)
 
             if not violations:
-                return Answer(
-                    Status.ANSWERED, reply.text, build_notes(turn.results), tuple(turn.results)
-                )
+                return self._answered(turn, reply.text)
 
             rejections += 1
 
             if rejections > self._settings.validation_retries:
                 return self._abstain(tuple(v.text for v in violations))
 
-            turn.messages.append(Message("user", text=rejection_feedback(violations)))
+            self._reject(turn, reply, violations)
+
+    def _next_reply(self, turn: Turn, *, with_tools: bool) -> Message:
+        """After the last allowed tool round the model gets no tools, so it must answer."""
+        reply = self._llm.complete(
+            system=self._system(),
+            messages=[m for t in self._turns for m in t.messages] + turn.messages,
+            tools=self._tools if with_tools else [],
+        )
+        turn.messages.append(reply)
+
+        return reply
 
     def _system(self) -> str:
-        note = entities_note(self._turns[-1].results) if self._turns else ""
+        last = next((t for t in reversed(self._turns) if any(r.ok for r in t.results)), None)
+        note = entities_note(last.results) if last else ""
 
         return f"{SYSTEM_PROMPT}\n{note}" if note else SYSTEM_PROMPT
 
@@ -119,6 +129,20 @@ class Agent:
             years=settings.year_range,
         )
 
+    def _reject(self, turn: Turn, draft: Message, violations: list[Violation]) -> None:
+        feedback = Message("user", text=rejection_feedback(violations))
+        turn.messages.append(feedback)
+        turn.rejected |= {id(draft), id(feedback)}
+
+    def _answered(self, turn: Turn, text: str) -> Answer:
+        """A reply that used no tool rests on the last results it could draw on, or on nothing."""
+        basis = turn.results or (self._turns[-1].results if self._turns else [])
+        notes = build_notes(basis) if basis else NO_DATA
+
+        return Answer(Status.ANSWERED, text, notes, tuple(turn.results))
+
     @staticmethod
     def _abstain(problems: tuple[str, ...]) -> Answer:
+        logger.warning("abstained: %s", "; ".join(problems))
+
         return Answer(Status.ABSTAINED, ABSTAIN_TEXT, problems=problems)

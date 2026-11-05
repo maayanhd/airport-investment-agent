@@ -13,7 +13,7 @@ class LlmError(Exception):
 class ToolCall:
     id: str
     name: str
-    arguments: dict[str, Any]
+    arguments: dict[str, Any]  # JSON chosen by the model, validated later by the tool
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,11 @@ class Message:
 
 class LlmClient(Protocol):
     def complete(
-        self, *, system: str, messages: Sequence[Message], tools: list[dict[str, Any]]
+        self,
+        *,
+        system: str,
+        messages: Sequence[Message],
+        tools: list[dict[str, Any]],  # JSON schemas
     ) -> Message:
         """The next assistant message. Raises LlmError when there is none."""
         ...
