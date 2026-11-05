@@ -136,7 +136,7 @@ def test_a_wrong_router_is_caught_by_the_routing_checks(dataset: Dataset) -> Non
 def test_a_model_that_answers_without_tools_does_not_pass_the_abstention_check(
     dataset: Dataset,
 ) -> None:
-    cases = [c for c in load_cases() if c.id in {"adv-02", "scope-01"}]
+    cases = [c for c in load_cases() if c.id in {"adv-02", "scope-03"}]
     summary = _summary(dataset, cases, NeverUsesTools())
 
     assert summary.scores["abstention"] == 0.0

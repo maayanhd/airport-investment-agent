@@ -36,6 +36,10 @@ airport_aliases:                # metro areas and nicknames the airport data can
   washington: [DCA, IAD, BWI]
   dc: [DCA, IAD, BWI]
   dallas: [DFW, DAL]
+out_of_scope_terms:             # scope gate: a question with one of these and no in_scope term gets no tool call
+  [weather, forecast, book, booking, ticket, tickets, hotel, stock, stocks, shares, invest in, buy, price of, cost, recipe]
+in_scope_terms:                 # any of these keeps the question for the model, so mixed asks are not blocked
+  [expansion, expand, congestion, congested, delay, delays, delayed, rank, compare, versus, unmet demand, passenger, passengers, growth, growing, load factor, capacity, score, candidates, airport, airports, long haul, long-haul]
 router_model: claude-haiku-5-5  # the agent loop's model: picks the tools and writes the answer
 judge_model: claude-sonnet-5-5
 coverage_airports: [ATL, LAX, ORD, DFW, DEN, JFK, SFO, SEA, LAS, MCO, EWR, CLT, PHX, IAH, MIA, BOS, MSP, FLL, DTW, PHL, LGA, BWI, SLC, SAN, IAD, DCA, TPA, BNA, AUS, MDW, HNL, DAL, PDX, STL, RDU, HOU, SMF, MSY, SJC, OAK, SNA, SAT, MCI, CLE, IND, PIT, CMH, CVG, OGG, MKE, JAX, RSW, ONT, BUR, LGB, ABQ, OMA, BUF, ANC, FAI, JNU, BET, OTZ, KTN, SIT, CDV, ADQ, OME, PSP, TUS, RNO, BOI, TUL, OKC, MEM, SDF, RIC, ORF, CHS, SAV, GRR, ALB, ROC, SYR, PVD, MHT, PWM, BGR, BTV, ORH, BDL, HVN, HYA, ACK, MVY, PSM, LEB]

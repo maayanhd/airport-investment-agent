@@ -47,6 +47,11 @@ DATA_ONLY_TEXT = (
     "I could not turn these results into an explanation I can verify, so here are the figures "
     "the tools returned, as they are:"
 )
+OUT_OF_SCOPE_TEXT = (
+    "That is outside what I can answer. I analyse US airports as expansion candidates from "
+    "public traffic and delay data: rankings by region, congestion comparisons, unmet demand "
+    "and distance profiles for one airport. Ask one of those and I will look it up."
+)
 UNAVAILABLE_TEXT = "The assistant is unavailable right now. Please try again in a moment."
 
 
