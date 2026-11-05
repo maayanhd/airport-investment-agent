@@ -44,7 +44,7 @@ def _why_missing(name: str, code: str, data: Dataset) -> str:
         return "no On-Time rows, no reporting carrier serves it"
 
     return (
-        f"fewer than {data.delays.min_months} consecutive months of delay data ({months} in total)"
+        f"fewer than {data.delays.min_months} consecutive months of delay data, {months} in total"
     )
 
 
