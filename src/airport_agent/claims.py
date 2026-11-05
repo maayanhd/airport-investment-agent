@@ -25,16 +25,24 @@ RANK_CLAIM = re.compile(
     re.I,
 )
 TOP_CLAIM = re.compile(r"\b(?:strongest|top-ranked|highest-scoring|best candidate)\b", re.I)
+# "the second strongest" and "not the strongest" are not a claim to be first
+QUALIFIED_TOP = re.compile(
+    r"(?:\b(?:second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|next|not|never|less|"
+    r"least)\b|n't|\b\d+(?:st|nd|rd|th))\W+(?:\w+\W+){0,2}$",
+    re.I,
+)
+# Any text up to the next sentence end; a period inside a figure ("21.4%") does not end it.
+SPAN = r"(?:[^.;\n]|\.(?=\d))*?"
 THAN = re.compile(
-    rf"{CODE.format(name='first')}\b(?P<middle>[^.;\n]*?)\bthan\b[^.;\n]*?\b"
-    rf"{CODE.format(name='second')}\b"
+    rf"{CODE.format(name='first')}\b(?P<middle>{SPAN})\bthan\b{SPAN}\b{CODE.format(name='second')}\b"
 )
 OUTRANKS = re.compile(
-    rf"{CODE.format(name='first')}\b[^.;\n]*?\b(?:outranks|ranks (?:above|ahead of))\b[^.;\n]*?\b"
+    rf"{CODE.format(name='first')}\b{SPAN}\b(?:outranks|ranks (?:above|ahead of))\b{SPAN}\b"
     rf"{CODE.format(name='second')}\b"
 )
 DELAY_TOPIC = re.compile(r"\b(?:delayed|delays?|congest\w*|late)\b", re.I)
-RANK_TOPIC = re.compile(r"\b(?:stronger|weaker|scores?|ranks?|candidate)\b", re.I)
+SCORE_TOPIC = re.compile(r"\bscores?\b", re.I)
+RANK_TOPIC = re.compile(r"\b(?:stronger|weaker|ranks?|candidate)\b", re.I)
 MORE_WORDS = re.compile(r"\b(?:more|higher|greater|stronger)\b", re.I)
 LESS_WORDS = re.compile(r"\b(?:less|fewer|lower|weaker|smaller)\b", re.I)
 # "better" and "worse" point opposite ways for delays (fewer is better) and for candidates
@@ -90,13 +98,24 @@ def _rank_problems(
         if claimed not in possible:
             yield f"{code} ranked {claimed}"
 
-    if TOP_CLAIM.search(sentence) and 1 not in possible:
+    if _claims_to_be_first(sentence) and 1 not in possible:
         yield f"{code} called the strongest"
+
+
+def _claims_to_be_first(sentence: str) -> bool:
+    return any(
+        not QUALIFIED_TOP.search(sentence[: m.start()]) for m in TOP_CLAIM.finditer(sentence)
+    )
 
 
 def _ahead_in_rankings(first: str, second: str, rankings: Sequence[Mapping[str, int]]) -> set[bool]:
     """Whether `first` is ahead of `second`, in each ranking that has both."""
     return {r[first] < r[second] for r in rankings if first in r and second in r}
+
+
+def _ahead_in_scores(first: str, second: str, scores: Sequence[Mapping[str, float]]) -> set[bool]:
+    """Whether `first` has the higher score, which can differ from its rank (partial scores)."""
+    return {s[first] > s[second] for s in scores if first in s and second in s}
 
 
 def _middle_direction(middle: str, *, delay_topic: bool) -> int:
@@ -130,6 +149,11 @@ def _than_problem(match: re.Match[str], evidence: Evidence) -> str | None:
         known = {(first, second), (second, first)} & evidence.delay_order
 
         return None if not known or order in known else match.group(0)
+
+    if SCORE_TOPIC.search(middle):
+        verdicts = _ahead_in_scores(first, second, evidence.scores)
+
+        return None if not verdicts or (direction > 0) in verdicts else match.group(0)
 
     if RANK_TOPIC.search(middle):
         verdicts = _ahead_in_rankings(first, second, evidence.rankings)

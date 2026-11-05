@@ -468,3 +468,56 @@ def test_up_and_down_count_as_a_direction_only_as_a_state() -> None:
     assert _check("BOS is up 2.3%.", GROWTH) != []
     assert _check("Settings are set up 2.3%.", GROWTH) == []
     assert _check("Delays are down to 2.3% of flights.", GROWTH) == []
+
+
+def test_a_city_inside_a_returned_airports_name_is_allowed() -> None:
+    cities = {"dallas": frozenset({"DAL"})}
+    rules = Rules(COVERAGE, max_plain_count=10, years=(1990, 2099), city_codes=cities)
+    named = _result(data={"airport": {"iata": "DFW", "name": "Dallas/Fort Worth International"}})
+
+    assert validate_answer("Dallas Fort Worth looks fine.", gather_evidence([named]), rules) == []
+
+
+def test_a_rank_after_an_abbreviated_no_is_still_checked() -> None:
+    assert _check("BOS is ranked No. 1.", BOTH) == []
+    assert _check("SFO is ranked No. 1.", BOTH) == ["SFO ranked 1"]
+
+
+def test_a_figure_from_another_airport_cannot_be_given_to_one_the_tools_never_returned() -> None:
+    only_sfo = _result(data={"airport": {"iata": "SFO"}, "score": 55.1})
+
+    assert _check("BOS scores 55.1.", only_sfo, question="and BOS?") == [
+        "55.1 (not a figure for BOS)"
+    ]
+    assert _check("BOS is not covered by that result.", only_sfo, question="and BOS?") == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["SFO is the second strongest candidate.", "SFO is not the strongest.", "SFO is 2nd best."],
+)
+def test_a_qualified_superlative_is_not_a_claim_to_be_first(answer: str) -> None:
+    assert _check(answer, BOTH) == []
+
+
+def test_a_higher_score_is_checked_against_the_score_not_the_rank() -> None:
+    partial = _result(
+        data={
+            "ranking": [
+                {"rank": 1, "airport": {"iata": "BOS"}, "score": 50.0},
+                {"rank": 2, "airport": {"iata": "SEA"}, "score": 70.0},
+            ]
+        }
+    )
+
+    assert _check("SEA has a higher score than BOS.", partial) == []
+    assert _check("BOS has a higher score than SEA.", partial) == [
+        "BOS has a higher score than SEA"
+    ]
+
+
+def test_a_figure_between_two_airports_does_not_hide_the_comparison() -> None:
+    assert _check("SNA, at 18.0%, is less delayed than LAX.", COMPARE) == []
+    assert _check("SNA, at 18.0%, is more delayed than LAX.", COMPARE) == [
+        "SNA, at 18.0%, is more delayed than LAX"
+    ]

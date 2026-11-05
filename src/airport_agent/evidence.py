@@ -25,6 +25,8 @@ class Evidence:
     rankings: tuple[Mapping[str, int], ...]  # one per tool result: airport code -> its rank
     delay_order: frozenset[tuple[str, str]]  # (more delayed, less delayed) as a tool decided
     question: str  # the question as padded lower-case words, for phrase lookups
+    scores: tuple[Mapping[str, float], ...] = ()  # like rankings, but the score itself
+    text: str = ""  # every string a tool returned as padded lower-case words, for city lookups
 
 
 @dataclass
@@ -36,6 +38,8 @@ class _Found:
     words: set[str] = field(default_factory=set)
     codes: set[str] = field(default_factory=set)
     rankings: list[dict[str, int]] = field(default_factory=list)
+    scores: list[dict[str, float]] = field(default_factory=list)
+    texts: list[str] = field(default_factory=list)
     delay_order: set[tuple[str, str]] = field(default_factory=set)
 
     def add_number(self, value: Decimal, sign: int, owner: str | None) -> None:
@@ -120,6 +124,11 @@ def _record_structure(node: dict[str, object], owner: str | None, found: _Found)
     if owner and isinstance(rank, int) and not isinstance(rank, bool):
         found.rankings[-1][owner] = rank
 
+    score = node.get("score")
+
+    if owner and isinstance(score, int | float) and not isinstance(score, bool):
+        found.scores[-1][owner] = float(score)
+
     worse = _code(node.get("more_delayed"))
     rows = node.get("airports")
     rows = rows if isinstance(rows, list) else []
@@ -135,6 +144,7 @@ def _record(item: object, owner: str | None, found: _Found) -> None:
         _record_structure(item, owner, found)
     elif isinstance(item, str):
         found.add_text(item, owner)
+        found.texts.append(item)
     elif isinstance(item, int | float) and not isinstance(item, bool):
         sign = -1 if item < 0 else 1
 
@@ -149,6 +159,7 @@ def gather_evidence(results: Sequence[ToolResult], question: str = "") -> Eviden
 
     for dump in dumps:
         found.rankings.append({})  # ranks are kept per tool result: two rankings can differ
+        found.scores.append({})
 
         for item, owner in _walk(dump, None):
             _record(item, owner, found)
@@ -166,4 +177,6 @@ def gather_evidence(results: Sequence[ToolResult], question: str = "") -> Eviden
         rankings=tuple(r for r in found.rankings if r),
         delay_order=frozenset(found.delay_order),
         question=f" {' '.join(search_words(question))} ",
+        scores=tuple(s for s in found.scores if s),
+        text=f" {' '.join(search_words(' '.join(found.texts)))} ",
     )

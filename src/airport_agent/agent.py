@@ -171,9 +171,9 @@ class Agent:
         turn.add(Message("user", text=rejection_feedback(violations)), keep=False)
 
     def _answered(self, turn: Turn, reply: Message) -> Answer:
-        """A reply that used no tool rests on the last results it could draw on, or on nothing."""
+        """The notes come from the same results the validator checked the reply against."""
         turn.kept.append(reply)
-        basis = turn.results or (self._turns[-1].results if self._turns else [])
+        basis = self._basis(turn)
         notes = build_notes(basis) if basis else NO_DATA
 
         return Answer(Status.ANSWERED, reply.text, notes, tuple(turn.results))

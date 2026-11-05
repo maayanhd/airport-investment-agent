@@ -447,3 +447,19 @@ def test_the_system_text_is_built_once_per_question(dataset: Dataset) -> None:
     _agent(dataset, llm).ask("How strong is BOS?")
 
     assert llm.calls[0]["system"] == llm.calls[1]["system"]
+
+
+def test_notes_come_from_the_results_the_reply_was_checked_against(dataset: Dataset) -> None:
+    llm = ScriptedLlm(
+        _call("airport_score", airport="SFO"),
+        _say(_score_text(dataset, "SFO")),
+        _say("You're welcome."),
+        _say(f"As before, {_score_text(dataset, 'SFO')}"),
+    )
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is SFO?")
+    agent.ask("thanks")
+    answer = agent.ask("Say the SFO score again.")
+
+    assert any("congestion proxy" in c for c in answer.notes.caveats)

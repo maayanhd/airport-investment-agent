@@ -13,9 +13,11 @@ from airport_agent.numbers import NUMBER_WORDS, Figure, find_figures
 
 YEAR_POSITION = re.compile(r"\b(?:in|since|from|through|until|by|during|of|to|for)\s$", re.I)
 SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
-MONTH_DOT = re.compile(
+# A period after these is not a sentence end: "Dec. 2025", "ranked No. 1", "approx. 21%".
+ABBREVIATION_DOT = re.compile(
     r"\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.(?=\s\d{4}\b)"
-)  # not an end
+    r"|\b(No|Nos|approx|vs|St|Mt|Ft)\."
+)
 
 
 class ViolationKind(StrEnum):
@@ -65,8 +67,12 @@ def _is_exempt(figure: Figure, rules: Rules) -> bool:
 def _owner_problem(figure: Figure, codes: list[str], evidence: Evidence) -> str | None:
     """A number in a sentence about one airport must not be only another airport's."""
     own = [evidence.owned[c] for c in codes if c in evidence.owned]
+    is_another_airports = any(figure.value in values for values in evidence.owned.values())
 
-    if not own or figure.value in evidence.shared or any(figure.value in values for values in own):
+    if not codes or figure.value in evidence.shared or any(figure.value in v for v in own):
+        return None
+
+    if not own and not is_another_airports:
         return None
 
     return f"{figure.text} (not a figure for {', '.join(dict.fromkeys(codes))})"
@@ -119,7 +125,8 @@ def _city_violations(answer: str, evidence: Evidence, rules: Rules) -> Iterator[
 
     for city, codes in rules.city_codes.items():
         phrase = f" {city} "
-        is_known = phrase in evidence.question or bool(codes & evidence.codes)
+        is_known = phrase in evidence.question or phrase in evidence.text
+        is_known = is_known or bool(codes & evidence.codes)
 
         if phrase in text and not is_known:
             yield Violation(ViolationKind.AIRPORT, city)
@@ -127,7 +134,11 @@ def _city_violations(answer: str, evidence: Evidence, rules: Rules) -> Iterator[
 
 def validate_answer(answer: str, evidence: Evidence, rules: Rules) -> list[Violation]:
     """Numbers, number words, airports and claims that no tool result or question supports."""
-    sentences = (s for s in SENTENCES.split(MONTH_DOT.sub(r"\1", answer)) if s.strip())
+    sentences = (
+        s
+        for s in SENTENCES.split(ABBREVIATION_DOT.sub(lambda m: m[1] or m[2], answer))
+        if s.strip()
+    )
     numbers = [v for sentence in sentences for v in _sentence_violations(sentence, evidence, rules)]
     codes = sorted({c for c in CODE.findall(answer) if c in rules.coverage} - evidence.codes)
 
