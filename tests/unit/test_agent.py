@@ -88,18 +88,49 @@ def test_an_invented_number_is_rejected_once_and_the_rewrite_is_shown(dataset: D
     assert "99.9" not in answer.text
 
 
-def test_two_bad_drafts_end_in_an_abstention_without_the_draft(dataset: Dataset) -> None:
+def test_two_bad_drafts_fall_back_to_the_tool_figures_without_the_draft(dataset: Dataset) -> None:
     llm = ScriptedLlm(
         _call("airport_score", airport="BOS"), _say("BOS scores 99.9."), _say("BOS scores 98.8.")
     )
 
     answer = _agent(dataset, llm).ask("How strong is BOS?")
 
-    assert answer.status is Status.ABSTAINED
+    real_score = build_registry(dataset).call("airport_score", {"airport": "BOS"}).data["score"]
+
+    assert answer.status is Status.DATA_ONLY
     assert "99.9" not in answer.text
     assert "98.8" not in answer.text
+    assert f"score: {real_score}" in answer.text
     assert answer.problems == ("98.8",)
-    assert answer.notes.caveats == ()
+    assert any("congestion proxy" in c for c in answer.notes.caveats)
+
+
+def test_bad_drafts_after_a_failed_tool_abstain_because_there_is_nothing_to_show(
+    dataset: Dataset,
+) -> None:
+    llm = ScriptedLlm(
+        _call("airport_score", airport="ZZZ"), _say("ZZZ scores 99.9."), _say("ZZZ scores 98.8.")
+    )
+
+    answer = _agent(dataset, llm).ask("How strong is ZZZ?")
+
+    assert answer.status is Status.ABSTAINED
+    assert answer.results == ()
+
+
+def test_a_follow_up_can_use_the_results_of_a_data_only_turn(dataset: Dataset) -> None:
+    llm = ScriptedLlm(
+        _call("airport_score", airport="BOS"),
+        _say("BOS scores 99.9."),
+        _say("BOS scores 98.8."),
+        _say(_score_text(dataset, "BOS")),
+    )
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is BOS?")
+    follow_up = agent.ask("And its score again?")
+
+    assert follow_up.status is Status.ANSWERED
 
 
 def test_an_empty_reply_counts_as_a_rejected_draft(dataset: Dataset) -> None:
@@ -117,7 +148,7 @@ def test_a_model_that_never_stops_calling_tools_is_cut_off(dataset: Dataset) -> 
 
     answer = _agent(dataset, llm).ask("How strong is BOS?")
 
-    assert answer.status is Status.ABSTAINED
+    assert answer.status is Status.DATA_ONLY
     assert answer.problems == ("too many tool rounds",)
     assert len(llm.calls) == rounds + 1
 

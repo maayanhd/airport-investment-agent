@@ -9,6 +9,7 @@ from airport_agent.tools.result import ToolResult
 
 class Status(StrEnum):
     ANSWERED = "answered"
+    DATA_ONLY = "data_only"  # the model's text was rejected; the tools' own figures are shown
     ABSTAINED = "abstained"  # no answer could be verified against the tool results
     UNAVAILABLE = "unavailable"  # the model could not be reached
 

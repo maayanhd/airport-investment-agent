@@ -31,6 +31,10 @@ ABSTAIN_TEXT = (
     "I could not produce an answer that I can verify against the data, so I am not showing one. "
     "Try asking about a specific airport or region."
 )
+DATA_ONLY_TEXT = (
+    "I could not turn these results into an explanation I can verify, so here are the figures "
+    "the tools returned, as they are:"
+)
 UNAVAILABLE_TEXT = "The assistant is unavailable right now. Please try again in a moment."
 
 
@@ -41,7 +45,8 @@ def rejection_feedback(violations: Sequence[Violation]) -> str:
     found = ", ".join(v.text for v in violations)
 
     return (
-        "Your draft was not shown: these figures or airports are not in the tool results: "
+        "Your draft was not shown: these figures, airports or claims do not match the tool "
+        "results: "
         f"{found}. Write it again using only values from the tool results, or call a tool."
     )
 

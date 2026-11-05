@@ -2,13 +2,17 @@
 
 import logging
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from airport_agent.answer import NO_DATA, Answer, Status, build_notes
 from airport_agent.config import Settings
+from airport_agent.evidence import gather_evidence
+from airport_agent.fallback import figures_text
 from airport_agent.llm import LlmClient, LlmError, Message, ToolCall, ToolOutput
 from airport_agent.prompts import (
     ABSTAIN_TEXT,
+    DATA_ONLY_TEXT,
     SYSTEM_PROMPT,
     UNAVAILABLE_TEXT,
     entities_note,
@@ -16,7 +20,7 @@ from airport_agent.prompts import (
 )
 from airport_agent.tools.registry import ToolRegistry
 from airport_agent.tools.result import ToolResult
-from airport_agent.validator import Violation, ViolationKind, gather_evidence, validate_answer
+from airport_agent.validator import Rules, Violation, ViolationKind, validate_answer
 
 logger = logging.getLogger(__name__)
 EMPTY_ANSWER = "(empty answer)"
@@ -36,10 +40,17 @@ class Turn:
 class Agent:
     """One conversation. Keeps the last `history_turns` turns so follow-ups can be resolved."""
 
-    def __init__(self, llm: LlmClient, registry: ToolRegistry, settings: Settings) -> None:
+    def __init__(
+        self,
+        llm: LlmClient,
+        registry: ToolRegistry,
+        settings: Settings,
+        city_codes: Mapping[str, frozenset[str]] | None = None,
+    ) -> None:
         self._llm = llm
         self._registry = registry
         self._settings = settings
+        self._rules = Rules.from_settings(settings, city_codes)
         self._tools = registry.definitions()
         self._turns: deque[Turn] = deque(maxlen=settings.history_turns)
 
@@ -55,8 +66,9 @@ class Agent:
 
         if answer.status is Status.ANSWERED:
             self._turns.append(Turn(turn.remembered(), turn.results))
-        else:  # keep the question but never the rejected drafts
-            self._turns.append(Turn([turn.messages[0], Message("assistant", text=answer.text)]))
+        else:  # keep the question and any tool results, but never the rejected drafts
+            reply = Message("assistant", text=answer.text)
+            self._turns.append(Turn([turn.messages[0], reply], list(answer.results)))
 
         return answer
 
@@ -69,7 +81,7 @@ class Agent:
 
             if reply.tool_calls:
                 if rounds >= self._settings.max_tool_rounds:
-                    return self._abstain((TOO_MANY_ROUNDS,))
+                    return self._fall_back(turn, (TOO_MANY_ROUNDS,))
 
                 rounds += 1
                 turn.messages.append(self._run_tools(reply.tool_calls, turn))
@@ -83,7 +95,7 @@ class Agent:
             rejections += 1
 
             if rejections > self._settings.validation_retries:
-                return self._abstain(tuple(v.text for v in violations))
+                return self._fall_back(turn, tuple(v.text for v in violations))
 
             self._reject(turn, reply, violations)
 
@@ -119,15 +131,8 @@ class Agent:
             return [Violation(ViolationKind.EMPTY, EMPTY_ANSWER)]
 
         results = [r for t in self._turns for r in t.results] + turn.results
-        settings = self._settings
 
-        return validate_answer(
-            text,
-            gather_evidence(results, question),
-            coverage=settings.coverage_airports,
-            max_plain_count=settings.max_plain_count,
-            years=settings.year_range,
-        )
+        return validate_answer(text, gather_evidence(results, question), self._rules)
 
     def _reject(self, turn: Turn, draft: Message, violations: list[Violation]) -> None:
         feedback = Message("user", text=rejection_feedback(violations))
@@ -140,6 +145,18 @@ class Agent:
         notes = build_notes(basis) if basis else NO_DATA
 
         return Answer(Status.ANSWERED, text, notes, tuple(turn.results))
+
+    def _fall_back(self, turn: Turn, problems: tuple[str, ...]) -> Answer:
+        """Unverifiable wording: show what this turn's tools returned, or abstain if none did."""
+        usable = [r for r in turn.results if r.ok]
+
+        if not usable:
+            return self._abstain(problems)
+
+        logger.warning("showed tool figures only: %s", "; ".join(problems))
+        text = f"{DATA_ONLY_TEXT}\n{figures_text(usable)}"
+
+        return Answer(Status.DATA_ONLY, text, build_notes(usable), tuple(usable), problems)
 
     @staticmethod
     def _abstain(problems: tuple[str, ...]) -> Answer:
