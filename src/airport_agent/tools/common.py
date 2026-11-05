@@ -1,9 +1,13 @@
 """Pieces every tool needs: airport resolution and the standard notes about the data."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 
 from airport_agent.dataset import Dataset
+from airport_agent.kpis import AirportKpis, compute_kpis
 from airport_agent.resolve import Match, resolve_airport
+from airport_agent.scoring import AirportScore, score_airport
 from airport_agent.tools.result import ErrorKind, ToolResult
 
 PROXY_CAVEAT = (
@@ -49,3 +53,89 @@ def data_caveats(data: Dataset) -> list[str]:
             notes.append(f"{heading}. {source.note}".strip())
 
     return notes
+
+
+def resolve_all(data: Dataset, tool: str, queries: list[str]) -> list[Resolved] | ToolResult:
+    resolved = []
+
+    for query in queries:
+        found = resolve(data, tool, query)
+
+        if not isinstance(found, Resolved):
+            return found
+
+        resolved.append(found)
+
+    return resolved
+
+
+def kpis_for(data: Dataset, code: str) -> AirportKpis:
+    delays = data.delays.series(code) if data.delays else []
+
+    return compute_kpis(
+        code,
+        data.traffic.series(code),
+        delays,
+        min_delay_months=data.settings.delays_min_months,
+    )
+
+
+def score_for(data: Dataset, kpis: AirportKpis) -> AirportScore:
+    settings = data.settings
+
+    return score_airport(
+        kpis,
+        weights=settings.score_weights,
+        bounds=settings.score_bounds,
+        min_confidence=settings.min_confidence,
+    )
+
+
+def airport_ref(data: Dataset, code: str) -> dict[str, str]:
+    airport = data.catalog.get(code)
+
+    return {
+        "iata": code,
+        "name": airport.name if airport else code,
+        "state": airport.state if airport else "",
+    }
+
+
+def month(value: date | None) -> str | None:
+    return f"{value:%Y-%m}" if value else None
+
+
+def metric(
+    value: float | None, show: Callable[[float], str], digits: int = 4
+) -> dict[str, object] | None:
+    """The number rounded once plus the text to quote, so the answer can match it exactly."""
+    return None if value is None else {"value": round(value, digits), "shown": show(value)}
+
+
+def _why_missing(name: str, code: str, data: Dataset) -> str:
+    if name != "delay_pressure":
+        return f"{name} needs consecutive months of traffic data"
+
+    if data.delays is None:
+        return "delay data is unavailable"
+
+    months = len(data.delays.series(code))
+
+    if months == 0:
+        return "no On-Time rows, no reporting carrier serves it"
+
+    return (
+        f"fewer than {data.delays.min_months} consecutive months of delay data ({months} in total)"
+    )
+
+
+def partial_caveat(result: AirportScore, code: str, data: Dataset) -> list[str]:
+    if not result.missing:
+        return []
+
+    reasons = "; ".join(_why_missing(name, code, data) for name in result.missing)
+
+    return [
+        f"{code}: built from {result.confidence:.0%} of the score weight ({reasons}). "
+        "Not comparable with scores that have every component."
+    ]

@@ -13,7 +13,7 @@ from airport_agent.display import FORMATS, LABELS
 from airport_agent.domain import DataMode
 from airport_agent.scoring import COMPONENTS
 from airport_agent.tools import build_registry
-from airport_agent.tools.airport_score import _why_missing
+from airport_agent.tools.common import _why_missing
 from airport_agent.tools.result import ErrorKind, ToolResult
 
 
@@ -134,7 +134,7 @@ def test_a_partial_score_says_what_is_missing_and_why(dataset: Dataset) -> None:
 
     assert result.ok
     assert result.data["missing"] == ["delay_pressure"]
-    partial = next(line for line in result.caveats if line.startswith("Built from"))
+    partial = next(line for line in result.caveats if "built from" in line)
     assert "80% of the score weight" in partial
     assert "fewer than 9 consecutive months of delay data" in partial
     assert "Not comparable" in partial
@@ -143,13 +143,13 @@ def test_a_partial_score_says_what_is_missing_and_why(dataset: Dataset) -> None:
 def test_a_full_score_has_no_partial_caveat(dataset: Dataset) -> None:
     result = _call(dataset, "BOS")
 
-    assert not any(line.startswith("Built from") for line in result.caveats)
+    assert not any("built from" in line for line in result.caveats)
 
 
 def test_an_airport_no_reporting_carrier_serves_says_so(dataset: Dataset) -> None:
     result = _call(dataset, "HVN")
 
-    partial = next(line for line in result.caveats if line.startswith("Built from"))
+    partial = next(line for line in result.caveats if "built from" in line)
     assert "no reporting carrier serves it" in partial
 
 

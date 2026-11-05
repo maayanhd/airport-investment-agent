@@ -7,7 +7,7 @@ from typing import Self
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from airport_agent.domain import IATA_PATTERN, search_words
+from airport_agent.domain import IATA_PATTERN, STATE_PATTERN, search_words
 from airport_agent.scoring import COMPONENTS
 
 WEIGHT_TOLERANCE = 1e-9
@@ -16,7 +16,8 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
 
 class Settings(BaseModel):
     long_haul_min_miles: float = Field(gt=0)
-    new_england_states: list[str]
+    regions: dict[str, list[str]]
+    strong_signal_scaled: float = Field(gt=0, le=1)
     score_weights: dict[str, float]
     score_bounds: dict[str, tuple[float, float]]
     min_confidence: float = Field(ge=0, le=1)
@@ -39,6 +40,17 @@ class Settings(BaseModel):
         if len(set(codes)) != len(codes) or any(not re.fullmatch(IATA_PATTERN, c) for c in codes):
             raise ValueError("coverage_airports must be unique 3-letter uppercase IATA codes")
         return codes
+
+    @field_validator("regions")
+    @classmethod
+    def _regions_are_named_states(cls, regions: dict[str, list[str]]) -> dict[str, list[str]]:
+        for name, states in regions.items():
+            valid = states and all(re.fullmatch(STATE_PATTERN, s) for s in states)
+
+            if name != " ".join(search_words(name)) or not valid:
+                raise ValueError(f"region {name!r}: use a lower-case name and 2-letter states")
+
+        return regions
 
     @model_validator(mode="after")
     def _window_covers_minimum(self) -> Self:

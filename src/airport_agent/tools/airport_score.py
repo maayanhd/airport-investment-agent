@@ -2,9 +2,18 @@ from pydantic import BaseModel, Field
 
 from airport_agent.dataset import Dataset
 from airport_agent.display import FORMATS, LABELS, describe_scoring
-from airport_agent.kpis import compute_kpis
-from airport_agent.scoring import AirportScore, score_airport
-from airport_agent.tools.common import PROXY_CAVEAT, Resolved, data_caveats, resolve
+from airport_agent.scoring import AirportScore
+from airport_agent.tools.common import (
+    PROXY_CAVEAT,
+    Resolved,
+    airport_ref,
+    data_caveats,
+    kpis_for,
+    month,
+    partial_caveat,
+    resolve,
+    score_for,
+)
 from airport_agent.tools.result import ErrorKind, ToolError, ToolResult
 
 
@@ -31,35 +40,6 @@ def _components(result: AirportScore) -> list[dict[str, object]]:
     ]
 
 
-def _why_missing(name: str, code: str, data: Dataset) -> str:
-    if name != "delay_pressure":
-        return f"{name} needs consecutive months of traffic data"
-
-    if data.delays is None:
-        return "delay data is unavailable"
-
-    months = len(data.delays.series(code))
-
-    if months == 0:
-        return "no On-Time rows, no reporting carrier serves it"
-
-    return (
-        f"fewer than {data.delays.min_months} consecutive months of delay data ({months} in total)"
-    )
-
-
-def _partial_caveat(result: AirportScore, code: str, data: Dataset) -> list[str]:
-    if not result.missing:
-        return []
-
-    reasons = "; ".join(_why_missing(name, code, data) for name in result.missing)
-
-    return [
-        f"Built from {result.confidence:.0%} of the score weight ({reasons}). "
-        "Not comparable with scores that have every component."
-    ]
-
-
 class AirportScoreTool:
     name = "airport_score"
     description = (
@@ -78,37 +58,16 @@ class AirportScoreTool:
         if not isinstance(resolved, Resolved):
             return resolved
 
-        settings = self._data.settings
-        delays = self._data.delays.series(resolved.code) if self._data.delays else []
-        kpis = compute_kpis(
-            resolved.code,
-            self._data.traffic.series(resolved.code),
-            delays,
-            min_delay_months=settings.delays_min_months,
-        )
-        result = score_airport(
-            kpis,
-            weights=settings.score_weights,
-            bounds=settings.score_bounds,
-            min_confidence=settings.min_confidence,
-        )
-        airport = self._data.catalog.get(resolved.code)
+        kpis = kpis_for(self._data, resolved.code)
+        result = score_for(self._data, kpis)
         data = {
-            "airport": {
-                "iata": resolved.code,
-                "name": airport.name if airport else resolved.code,
-                "state": airport.state if airport else "",
-            },
+            "airport": airport_ref(self._data, resolved.code),
             "score": None if result.score is None else round(result.score, 1),
             "confidence": round(result.confidence, 2),
             "components": _components(result),
             "missing": list(result.missing),
-            "traffic_through": kpis.traffic_through.strftime("%Y-%m")
-            if kpis.traffic_through
-            else None,
-            "delays_through": kpis.delays_through.strftime("%Y-%m")
-            if kpis.delays_through
-            else None,
+            "traffic_through": month(kpis.traffic_through),
+            "delays_through": month(kpis.delays_through),
         }
         failure = (
             None
@@ -120,10 +79,10 @@ class AirportScoreTool:
             tool=self.name,
             ok=failure is None,
             data=data,
-            assumptions=[*resolved.assumptions, *describe_scoring(settings)],
+            assumptions=[*resolved.assumptions, *describe_scoring(self._data.settings)],
             caveats=[
                 PROXY_CAVEAT,
-                *_partial_caveat(result, resolved.code, self._data),
+                *partial_caveat(result, resolved.code, self._data),
                 *data_caveats(self._data),
             ],
             sources=self._data.sources(),

@@ -7,7 +7,7 @@ from airport_agent.config import Settings, load_settings
 def test_default_config_loads() -> None:
     settings = load_settings()
     assert settings.long_haul_min_miles == 1500
-    assert "MA" in settings.new_england_states
+    assert "MA" in settings.regions["new england"]
 
 
 def test_score_weights_sum_to_one() -> None:
@@ -81,3 +81,20 @@ def test_alias_keys_must_be_in_the_form_the_resolver_matches() -> None:
 
     with pytest.raises(ValidationError, match="airport_aliases"):
         Settings.model_validate({**settings.model_dump(), "airport_aliases": aliases})
+
+
+@pytest.mark.parametrize(
+    "regions",
+    [
+        {"New England": ["MA"]},
+        {"new england": []},
+        {"new england": ["Mass"]},
+        {"new england": ["ma"]},
+    ],
+)
+def test_regions_need_lower_case_names_and_two_letter_states(regions: dict[str, list[str]]) -> None:
+    data = load_settings().model_dump()
+    data["regions"] = regions
+
+    with pytest.raises(ValidationError, match="region"):
+        Settings.model_validate(data)
