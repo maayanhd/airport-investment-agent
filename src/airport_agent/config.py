@@ -59,6 +59,14 @@ class Settings(BaseModel):
 
         return regions
 
+    @field_validator("year_range")
+    @classmethod
+    def _years_are_ordered(cls, years: tuple[int, int]) -> tuple[int, int]:
+        if years[0] >= years[1]:
+            raise ValueError("year_range needs a low year below the high year")
+
+        return years
+
     @model_validator(mode="after")
     def _window_covers_minimum(self) -> Self:
         if self.traffic_history_months < self.traffic_min_months:

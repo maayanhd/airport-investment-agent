@@ -98,3 +98,41 @@ def test_regions_need_lower_case_names_and_two_letter_states(regions: dict[str, 
 
     with pytest.raises(ValidationError, match="region"):
         Settings.model_validate(data)
+
+
+def _changed(**updates: object) -> dict[str, object]:
+    return {**load_settings().model_dump(), **updates}
+
+
+def test_scoring_weights_and_bounds_must_name_the_same_components() -> None:
+    settings = load_settings()
+    bounds = {k: v for k, v in settings.score_bounds.items() if k != "load_factor"}
+
+    with pytest.raises(ValidationError, match="same components"):
+        Settings.model_validate(_changed(score_bounds=bounds))
+
+
+def test_score_weights_must_sum_to_one_in_the_model() -> None:
+    weights = {k: 0.3 for k in load_settings().score_weights}
+
+    with pytest.raises(ValidationError, match="sum to 1"):
+        Settings.model_validate(_changed(score_weights=weights))
+
+
+def test_each_score_range_needs_a_low_below_the_high() -> None:
+    bounds = {**load_settings().score_bounds, "load_factor": (82.0, 50.0)}
+
+    with pytest.raises(ValidationError, match="low < high"):
+        Settings.model_validate(_changed(score_bounds=bounds))
+
+
+@pytest.mark.parametrize("value", [0, 1.5, -0.1])
+def test_strong_signal_position_must_be_inside_0_and_1(value: float) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(_changed(strong_signal_scaled=value))
+
+
+@pytest.mark.parametrize("years", [(2099, 1990), (2000, 2000)])
+def test_the_year_range_must_have_a_low_below_the_high(years: tuple[int, int]) -> None:
+    with pytest.raises(ValidationError, match="year_range"):
+        Settings.model_validate(_changed(year_range=years))

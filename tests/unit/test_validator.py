@@ -432,3 +432,92 @@ def test_real_congestion_and_ranking_results_feed_the_claim_checks(dataset: Data
 
     assert validate_answer(right, evidence, rules) == []
     assert [v.kind for v in validate_answer(wrong, evidence, rules)] == [ViolationKind.CLAIM] * 2
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Declined 1500 departures last year.",
+        "Marched 3000 seats into the schedule.",
+        "May be 2400 passengers, in May 1999 terms.",
+    ],
+)
+def test_a_word_that_starts_like_a_month_does_not_hide_a_number(answer: str) -> None:
+    assert _check(answer, DATA) != []
+
+
+def test_a_real_month_and_year_is_still_a_date() -> None:
+    assert _check("Data as of November 2026, Sep 2025 and Dec. 2025.", DATA) == []
+
+
+def test_worse_means_behind_for_a_candidate_and_ahead_for_delays() -> None:
+    assert _check("SFO is a worse candidate than BOS.", BOTH) == []
+    assert _check("BOS is a worse candidate than SFO.", BOTH) != []
+    assert _check("LAX has worse delays than SNA.", COMPARE) == []
+    assert _check("SNA has worse delays than LAX.", COMPARE) != []
+
+
+def test_an_ordinal_that_is_not_a_rank_is_not_a_rank_claim() -> None:
+    assert _check("SFO growth slowed in the 3rd period, and in the 12th month.", BOTH) == []
+    assert _check("SFO is in 2nd place.", BOTH) == []
+    assert _check("SFO is in 1st place.", BOTH) != []
+
+
+def test_up_and_down_count_as_a_direction_only_as_a_state() -> None:
+    assert _check("SEA is up 4.1%.", RISING) == []
+    assert _check("BOS is up 2.3%.", GROWTH) != []
+    assert _check("Settings are set up 2.3%.", GROWTH) == []
+    assert _check("Delays are down to 2.3% of flights.", GROWTH) == []
+
+
+def test_a_city_inside_a_returned_airports_name_is_allowed() -> None:
+    cities = {"dallas": frozenset({"DAL"})}
+    rules = Rules(COVERAGE, max_plain_count=10, years=(1990, 2099), city_codes=cities)
+    named = _result(data={"airport": {"iata": "DFW", "name": "Dallas/Fort Worth International"}})
+
+    assert validate_answer("Dallas Fort Worth looks fine.", gather_evidence([named]), rules) == []
+
+
+def test_a_rank_after_an_abbreviated_no_is_still_checked() -> None:
+    assert _check("BOS is ranked No. 1.", BOTH) == []
+    assert _check("SFO is ranked No. 1.", BOTH) == ["SFO ranked 1"]
+
+
+def test_a_figure_from_another_airport_cannot_be_given_to_one_the_tools_never_returned() -> None:
+    only_sfo = _result(data={"airport": {"iata": "SFO"}, "score": 55.1})
+
+    assert _check("BOS scores 55.1.", only_sfo, question="and BOS?") == [
+        "55.1 (not a figure for BOS)"
+    ]
+    assert _check("BOS is not covered by that result.", only_sfo, question="and BOS?") == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["SFO is the second strongest candidate.", "SFO is not the strongest.", "SFO is 2nd best."],
+)
+def test_a_qualified_superlative_is_not_a_claim_to_be_first(answer: str) -> None:
+    assert _check(answer, BOTH) == []
+
+
+def test_a_higher_score_is_checked_against_the_score_not_the_rank() -> None:
+    partial = _result(
+        data={
+            "ranking": [
+                {"rank": 1, "airport": {"iata": "BOS"}, "score": 50.0},
+                {"rank": 2, "airport": {"iata": "SEA"}, "score": 70.0},
+            ]
+        }
+    )
+
+    assert _check("SEA has a higher score than BOS.", partial) == []
+    assert _check("BOS has a higher score than SEA.", partial) == [
+        "BOS has a higher score than SEA"
+    ]
+
+
+def test_a_figure_between_two_airports_does_not_hide_the_comparison() -> None:
+    assert _check("SNA, at 18.0%, is less delayed than LAX.", COMPARE) == []
+    assert _check("SNA, at 18.0%, is more delayed than LAX.", COMPARE) == [
+        "SNA, at 18.0%, is more delayed than LAX"
+    ]

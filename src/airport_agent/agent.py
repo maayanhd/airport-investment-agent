@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from airport_agent.answer import NO_DATA, Answer, Status, build_notes
 from airport_agent.config import Settings
 from airport_agent.dataset import Dataset
-from airport_agent.evidence import gather_evidence
+from airport_agent.evidence import Evidence, gather_evidence
 from airport_agent.fallback import figures_text
 from airport_agent.llm import LlmClient, LlmError, Message, ToolCall, ToolOutput
 from airport_agent.prompts import (
@@ -31,12 +31,26 @@ TOO_MANY_ROUNDS = "too many tool rounds"
 
 @dataclass
 class Turn:
+    """One question and what came of it. `messages` is what the model sees this turn; `kept` is
+    what later turns see, so a rejected draft and its feedback are left out of it."""
+
     messages: list[Message]
     results: list[ToolResult] = field(default_factory=list)
-    rejected: set[int] = field(default_factory=set)  # ids of drafts and feedback not to remember
+    kept: list[Message] = field(default_factory=list)
+    system: str = ""
+    evidence: Evidence | None = None  # rebuilt only when a tool has run since
 
-    def remembered(self) -> list[Message]:
-        return [m for m in self.messages if id(m) not in self.rejected]
+    @classmethod
+    def start(cls, question: str, system: str) -> "Turn":
+        message = Message("user", text=question)
+
+        return cls([message], kept=[message], system=system)
+
+    def add(self, message: Message, *, keep: bool) -> None:
+        self.messages.append(message)
+
+        if keep:
+            self.kept.append(message)
 
 
 class Agent:
@@ -57,7 +71,7 @@ class Agent:
         self._turns: deque[Turn] = deque(maxlen=settings.history_turns)
 
     def ask(self, question: str) -> Answer:
-        turn = Turn([Message("user", text=question)])
+        turn = Turn.start(question, self._system())
 
         try:
             answer = self._converse(turn, question)
@@ -67,7 +81,7 @@ class Agent:
             return Answer(Status.UNAVAILABLE, UNAVAILABLE_TEXT)
 
         if answer.status is Status.ANSWERED:
-            self._turns.append(Turn(turn.remembered(), turn.results))
+            self._turns.append(Turn(turn.kept, turn.results))
         else:
             self._turns.append(self._declined(turn, answer))
 
@@ -76,7 +90,7 @@ class Agent:
     @staticmethod
     def _declined(turn: Turn, answer: Answer) -> Turn:
         """Keep the question and the tools' results, so options stay visible, but not the drafts."""
-        kept = turn.remembered()
+        kept = list(turn.kept)
 
         while kept and kept[-1].role == "assistant":  # the last draft, or a call never run
             kept.pop()
@@ -95,30 +109,30 @@ class Agent:
                     return self._fall_back(turn, (TOO_MANY_ROUNDS,))
 
                 rounds += 1
-                turn.messages.append(self._run_tools(reply.tool_calls, turn))
+                turn.add(self._run_tools(reply.tool_calls, turn), keep=True)
                 continue
 
             violations = self._check(reply.text, turn, question)
 
             if not violations:
-                return self._answered(turn, reply.text)
+                return self._answered(turn, reply)
 
             rejections += 1
 
             if rejections > self._settings.validation_retries:
                 return self._fall_back(turn, tuple(v.text for v in violations))
 
-            self._reject(turn, reply, violations)
+            self._reject(turn, violations)
 
     def _next_reply(self, turn: Turn, *, with_tools: bool) -> Message:
         """After the last allowed tool round the model gets no tools, so it must answer."""
         reply = self._llm.complete(
-            system=self._system(),
+            system=turn.system,
             messages=[m for t in self._turns for m in t.messages] + turn.messages,
             tools=self._tools,
             allow_tools=with_tools,
         )
-        turn.messages.append(reply)
+        turn.add(reply, keep=bool(reply.tool_calls))  # a text draft is kept only once accepted
 
         return reply
 
@@ -134,6 +148,7 @@ class Agent:
         for call in calls:
             result = self._registry.call(call.name, call.arguments)
             turn.results.append(result)
+            turn.evidence = None
             outputs.append(ToolOutput(call.id, result.model_dump_json(exclude={"sources"})))
 
         return Message("user", tool_outputs=tuple(outputs))
@@ -142,21 +157,26 @@ class Agent:
         if not text.strip():
             return [Violation(ViolationKind.EMPTY, EMPTY_ANSWER)]
 
-        results = [r for t in self._turns for r in t.results] + turn.results
+        if turn.evidence is None:
+            turn.evidence = gather_evidence(self._basis(turn), question)
 
-        return validate_answer(text, gather_evidence(results, question), self._rules)
+        return validate_answer(text, turn.evidence, self._rules)
 
-    def _reject(self, turn: Turn, draft: Message, violations: list[Violation]) -> None:
-        feedback = Message("user", text=rejection_feedback(violations))
-        turn.messages.append(feedback)
-        turn.rejected |= {id(draft), id(feedback)}
+    def _basis(self, turn: Turn) -> list[ToolResult]:
+        """What an answer may quote: this turn's tool results, or earlier ones if it made no call.
+        Pooling both would let an old number vouch for an unrelated new one."""
+        return turn.results or [r for t in self._turns for r in t.results]
 
-    def _answered(self, turn: Turn, text: str) -> Answer:
-        """A reply that used no tool rests on the last results it could draw on, or on nothing."""
-        basis = turn.results or (self._turns[-1].results if self._turns else [])
+    def _reject(self, turn: Turn, violations: list[Violation]) -> None:
+        turn.add(Message("user", text=rejection_feedback(violations)), keep=False)
+
+    def _answered(self, turn: Turn, reply: Message) -> Answer:
+        """The notes come from the same results the validator checked the reply against."""
+        turn.kept.append(reply)
+        basis = self._basis(turn)
         notes = build_notes(basis) if basis else NO_DATA
 
-        return Answer(Status.ANSWERED, text, notes, tuple(turn.results))
+        return Answer(Status.ANSWERED, reply.text, notes, tuple(turn.results))
 
     def _fall_back(self, turn: Turn, problems: tuple[str, ...]) -> Answer:
         """Unverifiable wording: show what this turn's tools returned, or abstain if none did."""

@@ -62,9 +62,9 @@ def test_an_airport_without_delay_data_is_named_in_the_failure(dataset: Dataset)
 
 def test_the_gap_is_the_difference_of_the_numbers_shown(dataset: Dataset) -> None:
     result = _compare(dataset, "SFO", "ANC")
-    a, b = (row["delay_rate"]["value"] for row in result.data["airports"])
+    first, second = (row["delay_rate"]["value"] for row in result.data["airports"])
 
-    assert result.data["delay_rate_gap"]["value"] == round(abs(a - b), 4)
+    assert result.data["delay_rate_gap"]["value"] == round(abs(first - second), 4)
 
 
 def test_different_delay_windows_are_called_out(dataset: Dataset) -> None:

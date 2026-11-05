@@ -1,9 +1,9 @@
 """Text the model is given. Kept apart from the loop so the rules can be read in one place."""
 
-import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 
-from airport_agent.domain import IATA_PATTERN, search_words
+from airport_agent.domain import search_words
+from airport_agent.evidence import airport_codes
 from airport_agent.tools.result import ToolResult
 from airport_agent.validator import Violation, ViolationKind
 
@@ -50,25 +50,10 @@ def rejection_feedback(violations: Sequence[Violation]) -> str:
     )
 
 
-def _codes(node: object) -> Iterator[str]:
-    if isinstance(node, dict):
-        iata = node.get("iata")
-
-        if isinstance(iata, str):
-            yield iata
-
-        for value in node.values():
-            yield from _codes(value)
-    elif isinstance(node, list):
-        for value in node:
-            yield from _codes(value)
-
-
 def entities_note(results: Sequence[ToolResult], max_airports: int) -> str:
     """A follow-up hint about the last turn. Cleaned, because it is prompt text."""
     tools = list(dict.fromkeys(r.tool for r in results if r.ok))
-    found = (c for r in results for c in _codes(r.data))
-    codes = list(dict.fromkeys(c for c in found if re.fullmatch(IATA_PATTERN, c)))
+    codes = list(dict.fromkeys(c for r in results for c in airport_codes(r.data)))
     regions = [" ".join(search_words(str(r.data["region"]))) for r in results if "region" in r.data]
 
     if not tools:
