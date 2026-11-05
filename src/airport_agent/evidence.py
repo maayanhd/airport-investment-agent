@@ -1,8 +1,4 @@
-"""What an answer may draw on: figures, airports and orderings in tool results and the question.
-
-Pure: no I/O, no model. Figures are kept with their sign and with the airport that owns them,
-so the validator can tell a wrong sign or another airport's number from a real one.
-"""
+"""What an answer may draw on: figures, airports and orderings in tool results and the question."""
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
@@ -97,6 +93,15 @@ def _walk(node: object, owner: str | None) -> Iterator[tuple[object, str | None]
             yield from _walk(value, owner)
     else:
         yield node, owner
+
+
+def airport_codes(node: object) -> Iterator[str]:
+    """Every airport code a tool result is about, in the order it appears."""
+    for item, _ in _walk(node, None):
+        code = _code(item.get("iata")) if isinstance(item, dict) else None
+
+        if code:
+            yield code
 
 
 def _quotable(value: float) -> Iterator[Decimal]:

@@ -27,11 +27,11 @@ def _ranking(result: ToolResult) -> str:
 
 
 def _congestion(result: ToolResult) -> str:
-    a, b = result.data["airports"]
+    first, second = result.data["airports"]
 
     return (
-        f"{a['airport']['iata']} has {a['delay_rate']['shown']} late departures and "
-        f"{b['airport']['iata']} has {b['delay_rate']['shown']}; "
+        f"{first['airport']['iata']} has {first['delay_rate']['shown']} late departures and "
+        f"{second['airport']['iata']} has {second['delay_rate']['shown']}; "
         f"{result.data['more_delayed']} is more delayed "
         f"(gap {result.data['delay_rate_gap']['shown']})."
     )

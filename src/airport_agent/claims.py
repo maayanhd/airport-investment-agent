@@ -1,8 +1,4 @@
-"""Claims with no figure to look up: a direction, a rank, or which of two airports is ahead. Pure.
-
-Each is checked only against what a tool decided (a rank row, `more_delayed`). A sentence the
-patterns do not recognise is not checked; the module docstring of `validator` lists that limit.
-"""
+"""Claims with no figure to look up: a direction, a rank, or which of two airports is ahead."""
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
@@ -13,17 +9,21 @@ from airport_agent.numbers import Figure
 CODE = r"(?P<{name}>[A-Z]{{3}})"
 UP_WORDS = (
     r"grew|grows|growing|rose|rises|rising|increased|increases|gained|climbed|jumped|surged|"
-    r"up|increase|rise|gain"
+    r"increase|rise|gain|(?:is|was|are|were)\s+up"
 )
 DOWN_WORDS = (
     r"fell|falls|falling|dropped|drops|declined|declines|decreased|decreases|shrank|shrinks|"
-    r"slipped|sank|contracted|down|decline|drop|fall|decrease"
+    r"slipped|sank|contracted|decline|drop|fall|decrease|(?:is|was|are|were)\s+down"
 )
 FILLER = r"(?:by\s+|of\s+)?(?:about\s+|roughly\s+|around\s+|nearly\s+|almost\s+|just\s+|over\s+)?"
 UP_BEFORE = re.compile(rf"\b(?:{UP_WORDS})\s+{FILLER}$", re.IGNORECASE)
 DOWN_BEFORE = re.compile(rf"\b(?:{DOWN_WORDS})\s+{FILLER}$", re.IGNORECASE)
-RANK_CLAIM = re.compile(r"#(\d+)\b|\brank(?:ed|s)?\s+(?:no\.?\s*|number\s*|#)?(\d+)\b", re.I)
-ORDINAL = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b")
+RANK_CLAIM = re.compile(
+    r"#(\d+)\b"
+    r"|\brank(?:ed|s)?\s+(?:no\.?\s*|number\s*|#)?(\d+)(?:st|nd|rd|th)?\b(?!\.\d)"
+    r"|\b(\d+)(?:st|nd|rd|th)\s+(?:place|position|rank|overall)\b",
+    re.I,
+)
 TOP_CLAIM = re.compile(r"\b(?:strongest|top-ranked|highest-scoring|best candidate)\b", re.I)
 THAN = re.compile(
     rf"{CODE.format(name='first')}\b(?P<middle>[^.;\n]*?)\bthan\b[^.;\n]*?\b"
@@ -35,9 +35,11 @@ OUTRANKS = re.compile(
 )
 DELAY_TOPIC = re.compile(r"\b(?:delayed|delays?|congest\w*|late)\b", re.I)
 RANK_TOPIC = re.compile(r"\b(?:stronger|weaker|scores?|ranks?|candidate)\b", re.I)
-MORE_WORDS = re.compile(r"\b(?:more|worse|higher|greater|stronger)\b", re.I)
+MORE_WORDS = re.compile(r"\b(?:more|higher|greater|stronger)\b", re.I)
 LESS_WORDS = re.compile(r"\b(?:less|fewer|lower|weaker|smaller)\b", re.I)
-BETTER = re.compile(r"\bbetter\b", re.I)  # fewer delays, but a stronger candidate
+# "better" and "worse" point opposite ways for delays (fewer is better) and for candidates
+BETTER = re.compile(r"\bbetter\b", re.I)
+WORSE = re.compile(r"\bworse\b", re.I)
 
 
 def direction_problem(figure: Figure, evidence: Evidence) -> str | None:
@@ -68,10 +70,7 @@ def direction_problem(figure: Figure, evidence: Evidence) -> str | None:
 
 def _claimed_ranks(sentence: str) -> Iterator[int]:
     for match in RANK_CLAIM.finditer(sentence):
-        yield int(match[1] or match[2])
-
-    for match in ORDINAL.finditer(sentence):
-        yield int(match[1])
+        yield int(match[1] or match[2] or match[3])
 
 
 def _rank_problems(
@@ -110,6 +109,9 @@ def _middle_direction(middle: str, *, delay_topic: bool) -> int:
 
     if BETTER.search(middle):
         return -1 if delay_topic else 1
+
+    if WORSE.search(middle):
+        return 1 if delay_topic else -1
 
     return 0
 

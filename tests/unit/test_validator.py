@@ -432,3 +432,39 @@ def test_real_congestion_and_ranking_results_feed_the_claim_checks(dataset: Data
 
     assert validate_answer(right, evidence, rules) == []
     assert [v.kind for v in validate_answer(wrong, evidence, rules)] == [ViolationKind.CLAIM] * 2
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Declined 1500 departures last year.",
+        "Marched 3000 seats into the schedule.",
+        "May be 2400 passengers, in May 1999 terms.",
+    ],
+)
+def test_a_word_that_starts_like_a_month_does_not_hide_a_number(answer: str) -> None:
+    assert _check(answer, DATA) != []
+
+
+def test_a_real_month_and_year_is_still_a_date() -> None:
+    assert _check("Data as of November 2026, Sep 2025 and Dec. 2025.", DATA) == []
+
+
+def test_worse_means_behind_for_a_candidate_and_ahead_for_delays() -> None:
+    assert _check("SFO is a worse candidate than BOS.", BOTH) == []
+    assert _check("BOS is a worse candidate than SFO.", BOTH) != []
+    assert _check("LAX has worse delays than SNA.", COMPARE) == []
+    assert _check("SNA has worse delays than LAX.", COMPARE) != []
+
+
+def test_an_ordinal_that_is_not_a_rank_is_not_a_rank_claim() -> None:
+    assert _check("SFO growth slowed in the 3rd period, and in the 12th month.", BOTH) == []
+    assert _check("SFO is in 2nd place.", BOTH) == []
+    assert _check("SFO is in 1st place.", BOTH) != []
+
+
+def test_up_and_down_count_as_a_direction_only_as_a_state() -> None:
+    assert _check("SEA is up 4.1%.", RISING) == []
+    assert _check("BOS is up 2.3%.", GROWTH) != []
+    assert _check("Settings are set up 2.3%.", GROWTH) == []
+    assert _check("Delays are down to 2.3% of flights.", GROWTH) == []

@@ -60,13 +60,13 @@ Without delay data, confidence would be 80%, the other three weights would be di
 - **The LLM does:** choose which tool to call and fill in its arguments, resolve follow-ups ("and BOS?") using conversation state, and write the explanation from tool output.
 - **The LLM never does:** produce a number or a rank, or call an API. Only tools call APIs, and a tool's only way in is a validated, named call.
 - **Guardrails:** a deterministic validator (`validator.py`, `evidence.py`, `claims.py`) checks every draft before it is shown, and gives the model one retry. It blocks:
-  - a number, or an airport code or covered city, that no tool result or the question contains;
+  - a number, or an airport code or covered city, that no tool result or the question contains. The results are this turn's; earlier turns' results count only when this turn made no tool call, so an old number can't vouch for a new answer;
   - a number with a flipped direction (a "fell" or "-" for a value the tool gives as positive, or the reverse);
   - a number that, in a sentence about one airport, belongs only to another airport;
   - a rank ("ranks 1st", "the strongest") or an "A is more delayed than B" or "A is a stronger candidate than B" claim that contradicts what the tool decided.
 
   If the retry also fails and the tools did return data, the user gets the tools' own figures as plain text (status `data_only`), never a refusal that hides good data. With no usable tool result, the agent abstains.
-  Known limits, not mitigated: claims in wording the patterns miss ("clearly ahead"), a number two airports share by chance, which of two airports named in one sentence a number belongs to, and a city name that is also an ordinary word (Ontario, Lebanon). The evals (M6) will measure how often these occur.
+  Known limits, not mitigated: claims in wording the patterns miss ("clearly ahead"), a number two airports share by chance, which of two airports named in one sentence a number belongs to, and a city name that is also an ordinary word (Ontario, Lebanon). A tool value given as an unsigned magnitude can make an honest "fell 3.4 points" look like a flipped direction. The evals (M6) will measure how often these occur.
 
   Airport names from datasets are cleaned to plain characters, but that can't stop ordinary words that read like an instruction. So tool output is passed to the model as data under a system instruction not to follow it, and the validator is the backstop. Matching is exact on the rounded values the tools return (a fraction may be quoted as a percent). Dates, years after a preposition, ordinals and plain counts up to 10 are exempt.
 - **Models** (`config.yaml`): a Haiku-class router, escalated only if evals show a gap, and a Sonnet-class judge used offline only. _Measured results TBD (README section 6)._

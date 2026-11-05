@@ -399,3 +399,51 @@ def test_the_agent_built_for_users_checks_city_names(dataset: Dataset) -> None:
 
     assert answer.status is not Status.ANSWERED
     assert "boston" in answer.problems
+
+
+def _score(dataset: Dataset, code: str) -> Any:
+    return build_registry(dataset).call("airport_score", {"airport": code}).data["score"]
+
+
+def test_an_earlier_turns_number_cannot_vouch_for_a_new_answer_that_used_tools(
+    dataset: Dataset,
+) -> None:
+    sfo, bos = _score(dataset, "SFO"), _score(dataset, "BOS")
+    old_number_reused = _say(f"Its score is {sfo}.")
+    llm = ScriptedLlm(
+        _call("airport_score", airport="SFO"),
+        _say(_score_text(dataset, "SFO")),
+        _call("airport_score", airport="BOS"),
+        old_number_reused,
+        old_number_reused,
+    )
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is SFO?")
+    answer = agent.ask("And BOS?")
+
+    assert sfo != bos
+    assert answer.status is Status.DATA_ONLY
+    assert str(bos) in answer.text
+
+
+def test_a_reply_without_tools_may_still_quote_the_earlier_turns_results(dataset: Dataset) -> None:
+    sfo = _score(dataset, "SFO")
+    llm = ScriptedLlm(
+        _call("airport_score", airport="SFO"),
+        _say(_score_text(dataset, "SFO")),
+        _say(f"As said, the score is {sfo}."),
+    )
+    agent = _agent(dataset, llm)
+
+    agent.ask("How strong is SFO?")
+
+    assert agent.ask("Remind me of the score?").status is Status.ANSWERED
+
+
+def test_the_system_text_is_built_once_per_question(dataset: Dataset) -> None:
+    llm = ScriptedLlm(_call("airport_score", airport="BOS"), _say(_score_text(dataset, "BOS")))
+
+    _agent(dataset, llm).ask("How strong is BOS?")
+
+    assert llm.calls[0]["system"] == llm.calls[1]["system"]
