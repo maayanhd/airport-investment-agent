@@ -2,7 +2,7 @@
 
 A chat agent that helps analysts find US airports where modernization is likely to pay off, judged by passenger and flight-capacity pressure. It's a one-day exercise, so this README is the decision log: written before the code and updated as things get built.
 
-> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, and the tool layer (registry plus the `airport_score` tool) are done. The other tools, the LLM loop, the answer validator and the evals are not. Sections marked _TBD_ get filled in as each milestone lands.
+> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, and the tool layer (registry plus five tools) and the answer validator are done. The LLM loop and the evals are not. Sections marked _TBD_ get filled in as each milestone lands.
 
 ## 1. Scope
 In scope: US airports, public aviation data, and questions about congestion, long-haul share, capacity pressure and expansion candidates, with follow-ups ("and what about BOS?").
@@ -120,6 +120,13 @@ Tools:
 - **Tool failures are results, not exceptions.** `ToolRegistry.call` never raises. Unknown tools, unknown or misspelled arguments, invalid values and crashes inside a tool all come back as a typed `ToolResult`. Unknown arguments are rejected rather than dropped, so the model can't claim an option it never had. Validation errors read as a short "field: problem", and a crash is logged and returned as `internal_error` without the traceback.
 - **Vague names ask, they don't list.** A name matching more than `max_name_candidates` (8) airports ("international" matches 73) gets "give a city, a state or a code". Aliases match ignoring punctuation and spacing ("L.A.", "l a"), and alias keys in `config.yaml` must already be in that plain form.
 - **Caveats are for surprises.** The catalog and delays are snapshots by design, so they add a caveat only when stale. Traffic adds one when live data fell back to a snapshot. Every result still lists all its sources with their data month.
+- **Round once, quote the rounded number.** `metric()` rounds a value and builds its `shown` text from that rounded value, so "12.3%" can never sit next to 0.1234. The validator then matches answers against `data` exactly, with no tolerance to tune. The same helper serves every tool, so rounding lives in one place.
+- **The window is part of the KPI, not recomputed in each tool.** `compute_kpis` reports `delay_months`, the length of the consecutive run its delay figures use. Tools used to count raw rows, which overstated the window when an airport had a gap. Now a tool cannot disagree with the KPI it reports.
+- **Compare on what the user sees.** The congestion gap and "worse airport" use the rounded rates. Two airports that both show 21.4% are called equal, not ranked on a hidden fifth decimal.
+- **Name collisions fail closed.** A region such as "LA" is both an alias and a state code. Rather than guess, `rank_region` reads it as neither and returns an error that shows the explicit form ("state LA"). The cost is one extra turn for Louisiana; the alternative was a silent wrong region.
+- **Say what was cut.** A ranking cut to `top_n` states how many scored airports are hidden and lists their codes, so a short list is not mistaken for the whole region. Partial-data airports that fell below the cut get their own line.
+- **Count signals against the configuration.** `unmet_demand` reports both the signals it computed and the number configured, so "3 strong of 3" cannot hide a missing fourth signal. The configured count comes from `score_weights`, so it cannot drift from the score.
+- **Different windows are flagged, not blocked.** Comparing airports whose delay data differs in length or end month still answers, with a caveat. Refusing would abstain on ordinary questions, since a month's lag or a gap is common; the caveat lets the analyst judge. An airport with too little delay data (under 9 months) is the case that does abstain.
 
 Code:
 - **Typed lambdas over `attrgetter` for sort keys.** `attrgetter("month")` takes the field name as a string that `mypy --strict` and renames can't check. `lambda m: m.month` is the same length and fully typed.

@@ -14,6 +14,8 @@ score_bounds:                   # [value scored 0, value scored 1]; clipped outs
   delay_pressure: [0.15, 0.30]
   capacity_gap: [-0.05, 0.05]
 min_confidence: 0.6
+max_plain_count: 10             # answer validator: plain integers 0..this ("top 3") need no source
+year_range: [1990, 2099]        # answer validator: a number in this range after "in", "since"... is a year
 snapshot_dir: data/snapshots
 max_data_age_months: 6          # older data is flagged stale (BTS lags 2-4 months)
 traffic_history_months: 30      # window requested; BTS lags 3-4 months, so 30 yields about 26
