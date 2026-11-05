@@ -72,3 +72,5 @@ def test_the_prompt_asks_for_the_wording_and_the_size_note_that_testing_showed_w
     assert "score points" in SYSTEM_PROMPT
     assert "passengers_12m" in SYSTEM_PROMPT
     assert "Do not describe how the tools work" in SYSTEM_PROMPT
+    assert "out of scope" in SYSTEM_PROMPT
+    assert "Never retry with a different" in SYSTEM_PROMPT
