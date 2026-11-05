@@ -72,6 +72,10 @@ All tunable values live in `config.yaml`, with a comment there. This table says 
 | `session_ttl_minutes`, `max_sessions` | 60, 200 | An idle conversation is forgotten after the first; past the second, the least recently used goes. |
 | `max_message_chars` | 2000 | Longest question the API accepts. |
 | `eval_thresholds` | per metric | A metric below its threshold fails `python -m evals.run`. |
+| `model_prices` | Haiku 0.10 / 0.50, Sonnet 2.00 / 10.00 | USD per million input / output tokens, used to price an eval run. Copied from the vendor's price list; check it before trusting a cost. |
+| `judge_min_labels` | 20 | Hand-labelled answers needed before judge scores are called calibrated. |
+| `judge_min_agreement` | 0.80 | On every criterion, the share of judge scores within the tolerance of the hand label that calibration needs. |
+| `judge_agreement_tolerance` | 1 | How many points apart (on the 1 to 5 scale) a judge score and a hand label may be and still agree. |
 
 ## 3. Risk and what happens when the system is wrong
 Being wrong with confidence is worse than abstaining.
@@ -152,7 +156,9 @@ Smallest model that passes the eval for each step. The router and agent loop sta
 | `disclosures` | the case's `must_state` items (data month, live or snapshot, proxy label, alias reading, "not a share"), read from the tool results' provenance and the caveat constants where they exist, not from rendered note wording |
 | `proxy_wording` | a heuristic, no threshold: the model's own text calls a proxy a proxy. The notes always carry the caveat, so this is the metric a prompt can move |
 
-Not run yet, and said so in every report: the LLM judge (`evals/rubric.md` is written but nothing has been scored with it), judge calibration, the model-cost table, and live mode. Until a live client exists, the only client is the oracle, which does what each case expects and words the answer from the tool output. Its job is to prove the harness and the agent code: every score should be 1.00, and a test checks that a deliberately wrong router is caught. **An oracle row says nothing about a model or a prompt**; prompt tuning starts when the live client lands.
+Clients. `--client oracle` does what each case expects and words the answer from the tool output. Its job is to prove the harness and the agent code: every score should be 1.00, and a test checks that a deliberately wrong router is caught. **An oracle row says nothing about a model or a prompt.** `--client anthropic` runs the real model (`router_model`) on the same recorded data; it needs `ANTHROPIC_API_KEY` and spends money. The report and the ledger row carry the tokens, the cost in USD (tokens times `model_prices`) and the cost per question.
+
+Judge. `--judge` adds a second paid model (`judge_model`) that grades the prose of each verified answer from 1 to 5 on the four criteria in `evals/rubric.md`: answers the question, no invented information, tone, states assumptions. It sees the question, the answer and the tool results, and never produces or checks a number (the deterministic metrics do that). Figures-only fallbacks are not judged because code wrote them. Its scores are advisory until calibrated: label `judge_min_labels` answers by hand in `evals/calibration.yaml` and run `python -m evals.run --calibrate`, which needs `judge_min_agreement` agreement on every criterion (scores within `judge_agreement_tolerance` points of yours). With fewer labels the command reports "NOT calibrated" and exits 1 without calling the model. The report labels judge scores advisory, and `--calibrate` prints the per-criterion agreement; calibration is not yet recorded in the ledger, so do not quote a judge score as a result before running it.
 
 
 ## 8. Architecture and engineering principles

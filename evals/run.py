@@ -1,7 +1,9 @@
 """Run the question set through the agent and score it: `python -m evals.run --client oracle`.
 
-Recorded mode only: the data comes from the committed snapshots and the model is the oracle, so a
-run needs no network and no key. A live client plugs in through `CLIENTS` when it exists.
+The data always comes from the committed snapshots. The oracle needs no network and no key.
+`--client anthropic` calls the real model (needs ANTHROPIC_API_KEY and spends money), and
+`--judge` adds a second paid model that grades the prose. `--calibrate` checks that judge
+against hand labels.
 """
 
 import argparse
@@ -10,7 +12,7 @@ import json
 import subprocess
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -18,31 +20,45 @@ from typing import Any
 import httpx
 
 from airport_agent.agent import build_agent
+from airport_agent.answer import Status
+from airport_agent.anthropic_client import AnthropicClient, MissingApiKeyError
 from airport_agent.config import Settings, load_settings
 from airport_agent.data.http import HttpFetcher
 from airport_agent.data.snapshots import SnapshotStore
 from airport_agent.dataset import Dataset, load_dataset
-from airport_agent.llm import LlmClient, Message
+from airport_agent.env_file import load_env_file
+from airport_agent.llm import LlmClient, Message, Usage
 from airport_agent.prompts import SYSTEM_PROMPT
 from airport_agent.tools import build_registry
 from evals.cases import Case, load_cases
+from evals.cost import cost_usd
+from evals.judge import (
+    Calibration,
+    Grade,
+    calibrate,
+    judge_outcome,
+    load_labels,
+    mean_scores,
+)
 from evals.metrics import Outcome, Summary, by_category, summarize
 from evals.oracle import Oracle
 
 REPO = Path(__file__).resolve().parents[1]
 LEDGER_PATH = Path(__file__).parent / "ledger.jsonl"
 DEFAULT_PROMPT = "default"
-NOT_RUN = "judge rubric, judge calibration, model-cost table, live mode"
-MODE = "recorded"
+MODE = "recorded data"  # the data is always the committed snapshots, never a live fetch
 
 
 @dataclass(frozen=True)
 class ClientSpec:
-    make: Callable[[Sequence[Case]], LlmClient]
+    make: Callable[[Sequence[Case], Settings], LlmClient]
     is_model_backed: bool  # False means it ignores the system prompt, so prompts cannot be compared
 
 
-CLIENTS: dict[str, ClientSpec] = {"oracle": ClientSpec(Oracle, is_model_backed=False)}
+CLIENTS: dict[str, ClientSpec] = {
+    "oracle": ClientSpec(lambda cases, settings: Oracle(cases), is_model_backed=False),
+    "anthropic": ClientSpec(lambda cases, settings: AnthropicClient.from_settings(settings), True),
+}
 
 
 class CountingClient:
@@ -77,6 +93,10 @@ class Run:
     summary: Summary
     thresholds: dict[str, float]
     turns_by_category: dict[str, int]
+    usage: Usage | None = None  # None for the oracle, which uses no model
+    judged: tuple[Grade, ...] = ()
+    judge_usage: Usage | None = None
+    unjudged: int = 0  # answers the judge failed to grade
 
 
 def offline_dataset(settings: Settings) -> Dataset:
@@ -103,6 +123,16 @@ def run_cases(cases: list[Case], client: LlmClient, data: Dataset, prompt: str) 
             outcomes.append(Outcome(case, turn, answer, counter.calls - before, seconds))
 
     return outcomes
+
+
+def judge_outcomes(
+    outcomes: list[Outcome], client: AnthropicClient
+) -> tuple[tuple[Grade, ...], int]:
+    """Grades the model's own prose; fallback text is written by code, so it is not judged."""
+    answered = [o for o in outcomes if o.answer.status is Status.ANSWERED]
+    grades = [judge_outcome(client, o) for o in answered]
+
+    return tuple(g for g in grades if g), grades.count(None)
 
 
 def exit_code(run: Run) -> int:
@@ -136,12 +166,53 @@ def git_sha() -> str:
     return f"{sha}-dirty" if changed else sha
 
 
+def _judge_lines(run: Run) -> list[str]:
+    if not run.judged and not run.unjudged:
+        return ["Judge: not run (add --judge; scores would be advisory until --calibrate passes)"]
+
+    means = ", ".join(f"{c} {v:.2f}" for c, v in mean_scores(run.judged).items())
+
+    return [
+        f"Judge (advisory, 1 to 5, {len(run.judged)} answers graded, {run.unjudged} not): "
+        f"{means or 'no grades'}"
+    ]
+
+
+def _cost(usage: Usage | None, model: str, settings: Settings) -> float | None:
+    return None if usage is None else cost_usd(usage, settings.model_prices[model])
+
+
+def _total_cost(run: Run, settings: Settings) -> float | None:
+    agent = _cost(run.usage, settings.router_model, settings)
+
+    if agent is None:
+        return None
+
+    return agent + (_cost(run.judge_usage, settings.judge_model, settings) or 0.0)
+
+
+def _cost_lines(run: Run, settings: Settings) -> list[str]:
+    agent = _cost(run.usage, settings.router_model, settings)
+
+    if agent is None or run.usage is None:
+        return ["Cost: none (no model was called)"]
+
+    questions = max(run.summary.turns, 1)
+    judge = _cost(run.judge_usage, settings.judge_model, settings) or 0.0
+
+    return [
+        f"Cost: agent ${agent:.4f} ({run.usage.input_tokens} in, {run.usage.output_tokens} out "
+        f"tokens, ${agent / questions:.5f} per question), judge ${judge:.4f}"
+    ]
+
+
 def format_report(run: Run, settings: Settings) -> str:
     lines = [
         f"EVAL RUN  {date.today()}  sha {run.sha}  models: router={settings.router_model} "
         f"judge={settings.judge_model}  mode: {MODE}  client: {run.client}  prompt: {run.prompt}",
         "Stages evaluated: data, scoring, routing, answers (deterministic checks)",
-        f"Stages TBD (not run): {NOT_RUN}",
+        *_judge_lines(run),
+        *_cost_lines(run, settings),
         "",
         "| Metric | Score | Threshold | Pass |",
     ]
@@ -182,7 +253,17 @@ def ledger_row(run: Run, settings: Settings) -> dict[str, object]:
         "model_calls": run.summary.model_calls,
         "seconds": round(run.summary.seconds, 2),
         "scores": {name: round(score, 4) for name, score in run.summary.scores.items()},
-        "cost_usd": None,  # the oracle costs nothing; a live client fills this in
+        "cost_usd": _total_cost(run, settings),  # agent plus judge; None: no model used
+        "agent_cost_usd": _cost(run.usage, settings.router_model, settings),
+        "tokens": None if run.usage is None else asdict(run.usage),
+        "judge": {
+            "graded": len(run.judged),
+            "ungraded": run.unjudged,
+            "mean_scores": {c: round(v, 2) for c, v in mean_scores(run.judged).items()},
+            "cost_usd": _cost(run.judge_usage, settings.judge_model, settings),
+        }
+        if run.judged or run.unjudged
+        else None,
     }
 
 
@@ -211,7 +292,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--prompt", type=Path, help="a system prompt file to try instead of the default"
     )
     parser.add_argument("--no-ledger", action="store_true", help="print the report, record nothing")
+    parser.add_argument("--judge", action="store_true", help="also grade the prose (paid)")
+    parser.add_argument(
+        "--calibrate", action="store_true", help="only check the judge against hand labels (paid)"
+    )
     args = parser.parse_args(argv)
+
+    if args.calibrate and (args.judge or args.prompt or args.client != "oracle"):
+        parser.error("--calibrate only checks the judge; use it on its own")
+
+    if args.judge and not CLIENTS[args.client].is_model_backed:
+        parser.error("the oracle's wording is written by code; there is no prose to judge")
 
     if args.prompt and not CLIENTS[args.client].is_model_backed:
         parser.error(f"the {args.client} client ignores the system prompt; use a model-backed one")
@@ -226,10 +317,15 @@ def build_run(args: argparse.Namespace, settings: Settings) -> Run:
     prompt, name = read_prompt(args.prompt)
     data = offline_dataset(settings)
     spec = CLIENTS[args.client]
-    outcomes = run_cases(cases, spec.make(cases), data, prompt)
+    judge_client = (  # built before the paid run, so a missing key fails before money is spent
+        AnthropicClient.from_settings(settings, model=settings.judge_model) if args.judge else None
+    )
+    client = spec.make(cases, settings)
+    outcomes = run_cases(cases, client, data, prompt)
     summary = summarize(
         outcomes, build_registry(data), settings.max_plain_count, settings.year_range
     )
+    judged, unjudged = judge_outcomes(outcomes, judge_client) if judge_client else ((), 0)
 
     return Run(
         args.client,
@@ -240,13 +336,60 @@ def build_run(args: argparse.Namespace, settings: Settings) -> Run:
         summary,
         settings.eval_thresholds,
         by_category(outcomes),
+        client.usage if isinstance(client, AnthropicClient) else None,
+        judged,
+        judge_client.usage if judge_client else None,
+        unjudged,
     )
+
+
+def format_calibration(result: Calibration) -> str:
+    verdict = "calibrated" if result.is_calibrated else "NOT calibrated"
+
+    per_criterion = ", ".join(f"{c} {v:.2f}" for c, v in result.by_criterion.items()) or "none"
+
+    return (
+        f"Judge calibration: {result.labels} labelled answers (need {result.needed_labels}); "
+        f"agreement per criterion (need {result.needed_agreement:.2f} on each): "
+        f"{per_criterion}: {verdict}"
+    )
+
+
+def run_calibration(settings: Settings) -> int:
+    labels = load_labels()
+    needed, wanted = settings.judge_min_labels, settings.judge_min_agreement
+
+    if len(labels) < needed:  # no point paying for a verdict that cannot pass
+        result = Calibration(len(labels), {}, needed, wanted)
+    else:
+        client = AnthropicClient.from_settings(settings, model=settings.judge_model)
+        result = calibrate(
+            client,
+            labels,
+            needed_labels=needed,
+            needed_agreement=wanted,
+            tolerance=settings.judge_agreement_tolerance,
+        )
+
+    print(format_calibration(result))
+
+    return 0 if result.is_calibrated else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     settings = load_settings()
-    run = build_run(args, settings)
+    load_env_file()  # the model key lives in the repo's .env; a variable already set wins
+
+    try:
+        if args.calibrate:
+            return run_calibration(settings)
+
+        run = build_run(args, settings)
+    except MissingApiKeyError as error:
+        print(f"Cannot run: {error}")
+
+        return 2
 
     print(format_report(run, settings))
 

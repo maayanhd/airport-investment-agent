@@ -50,6 +50,12 @@ max_sessions: 200               # past this the least recently used conversation
 max_message_chars: 2000         # longest question the API accepts
 history_turns: 6                # earlier turns kept so follow-ups like "and BOS?" can be resolved
 validation_retries: 1           # rejected drafts the model may rewrite before the agent abstains
+model_prices:                   # USD per million tokens, from the vendor's price list (2026-10)
+  claude-haiku-5-5: {input_usd_per_million: 0.10, output_usd_per_million: 0.50}  # prompts up to 100K
+  claude-sonnet-5-5: {input_usd_per_million: 2.00, output_usd_per_million: 10.00}
+judge_min_labels: 20            # hand-labelled answers needed before the judge is trusted
+judge_min_agreement: 0.80       # on every criterion, the share of judge scores near the hand label
+judge_agreement_tolerance: 1    # "near" means within this many points of the 1 to 5 label
 eval_thresholds:                # evals/run.py: a metric below its threshold fails the run
   routing_precision: 0.90       # share of tools the model called that the case expected
   routing_recall: 0.90          # share of expected tools the model called

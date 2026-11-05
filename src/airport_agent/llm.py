@@ -30,6 +30,22 @@ class Message:
     tool_outputs: tuple[ToolOutput, ...] = ()  # user only
 
 
+@dataclass
+class Usage:
+    """What a client has used so far, to price a run."""
+
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def add(self, reply: Any) -> None:  # the vendor's reply, left untyped for test stand-ins
+        usage = getattr(reply, "usage", None)
+
+        self.requests += 1
+        self.input_tokens += getattr(usage, "input_tokens", 0) or 0
+        self.output_tokens += getattr(usage, "output_tokens", 0) or 0
+
+
 class LlmClient(Protocol):
     def complete(
         self,

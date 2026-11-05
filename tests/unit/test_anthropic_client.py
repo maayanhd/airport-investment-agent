@@ -174,3 +174,26 @@ def test_the_sdk_is_built_with_the_key_and_limits_and_called_through_the_wrapper
     }
     assert api.requests[0]["model"] == settings.router_model
     assert api.requests[0]["max_tokens"] == settings.llm_max_tokens
+
+
+def test_usage_is_counted_across_calls() -> None:
+    reply = _reply(_text("hi"))
+    reply.usage = SimpleNamespace(input_tokens=50, output_tokens=7)
+    client = _client(FakeApi(reply))
+
+    for _ in range(2):
+        client.complete(system="s", messages=[Message("user", "q")], tools=[], allow_tools=False)
+
+    assert (client.usage.requests, client.usage.input_tokens, client.usage.output_tokens) == (
+        2,
+        100,
+        14,
+    )
+
+
+def test_a_request_without_tools_sends_no_tool_fields() -> None:
+    api = FakeApi(_reply(_text("hi")))
+
+    _client(api).complete(system="s", messages=[Message("user", "q")], tools=[], allow_tools=False)
+
+    assert "tools" not in api.requests[0] and "tool_choice" not in api.requests[0]

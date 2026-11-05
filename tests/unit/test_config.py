@@ -162,3 +162,11 @@ def test_every_setting_has_a_row_in_the_readme_table() -> None:
     ]
 
     assert missing == []
+
+
+def test_a_configured_model_without_a_price_is_refused() -> None:
+    settings = load_settings()
+    prices = {k: v for k, v in settings.model_prices.items() if k != settings.judge_model}
+
+    with pytest.raises(ValidationError, match="no price"):
+        Settings.model_validate({**settings.model_dump(), "model_prices": prices})

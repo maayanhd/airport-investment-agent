@@ -14,6 +14,11 @@ WEIGHT_TOLERANCE = 1e-9
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
 
 
+class ModelPrice(BaseModel):
+    input_usd_per_million: float = Field(ge=0)
+    output_usd_per_million: float = Field(ge=0)
+
+
 class Settings(BaseModel):
     long_haul_min_miles: float = Field(gt=0)
     regions: dict[str, list[str]]
@@ -48,6 +53,10 @@ class Settings(BaseModel):
     min_airport_share: float = Field(gt=0, le=1)
     max_name_candidates: int = Field(ge=2)
     eval_thresholds: dict[str, float]
+    model_prices: dict[str, ModelPrice]
+    judge_min_labels: int = Field(ge=1)
+    judge_min_agreement: float = Field(gt=0, le=1)
+    judge_agreement_tolerance: int = Field(ge=0, le=3)
 
     @property
     def request_budget_seconds(self) -> float:
@@ -80,6 +89,15 @@ class Settings(BaseModel):
             raise ValueError("year_range needs a low year below the high year")
 
         return years
+
+    @model_validator(mode="after")
+    def _models_have_prices(self) -> Self:
+        unpriced = {self.router_model, self.judge_model} - self.model_prices.keys()
+
+        if unpriced:
+            raise ValueError(f"model_prices has no price for {sorted(unpriced)}")
+
+        return self
 
     @model_validator(mode="after")
     def _window_covers_minimum(self) -> Self:
