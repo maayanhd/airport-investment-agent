@@ -9,6 +9,7 @@ from airport_agent.chat_render import UNREACHABLE, Reply, escape_markdown, reply
 from airport_agent.config import load_settings
 
 API_URL = os.environ.get("AIRPORT_AGENT_API", "http://127.0.0.1:8000")
+WAITING_TEXT = "Checking the data and writing the answer..."
 TIMEOUT_SECONDS = load_settings().request_budget_seconds  # as long as the server may take
 
 
@@ -53,7 +54,9 @@ def main() -> None:
 
     question = Reply(escape_markdown(message))
     show("user", question)
-    answer = ask(message, st.session_state.session_id)
+
+    with st.spinner(WAITING_TEXT):
+        answer = ask(message, st.session_state.session_id)
 
     if answer.reset_session:
         st.session_state.session_id = None
