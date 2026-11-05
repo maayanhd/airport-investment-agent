@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError, field_validator
 
 from airport_agent.llm import LlmClient, LlmError, Message
 from airport_agent.tools.result import ToolResult
@@ -31,7 +31,7 @@ INSTRUCTIONS = (
 class Grade(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scores: dict[str, int]
+    scores: dict[str, StrictInt]  # "4" or true is a format error, not a score
     evidence: dict[str, str] = {}
 
     @field_validator("scores")
@@ -74,7 +74,7 @@ class Calibration:
 
 
 def _data_text(results: Sequence[ToolResult]) -> str:
-    """Failed results too: a clarification or refusal rests on one."""
+    """Failed results too, so a reply that rests on one is not judged as unsupported."""
     return "\n".join(r.model_dump_json(exclude={"sources"}) for r in results) or "(none)"
 
 

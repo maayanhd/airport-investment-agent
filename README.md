@@ -2,7 +2,7 @@
 
 A chat agent that helps analysts find US airports where modernization is likely to pay off, judged by passenger and flight-capacity pressure. It's a one-day exercise, so this README is the decision log: written before the code and updated as things get built.
 
-> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, the tool layer (registry plus five tools), the answer validator, the agent loop, the offline eval harness, the real model client, the HTTP API and the chat page are done. The model-backed evals, the judge and the cost table are not (they need a key and a paid run). Sections marked _TBD_ get filled in as each milestone lands.
+> Status: the data layer (catalog, BTS traffic, On-Time delays), the KPIs and scoring, the tool layer (registry plus five tools), the answer validator, the agent loop, the offline eval harness, the real model client, the HTTP API and the chat page are done. The model-backed eval, the judge and the cost table are built and have had a first paid run (section 6); the judge is not yet calibrated, and the first run missed two thresholds. Sections marked _TBD_ get filled in as each milestone lands.
 
 ## 1. Scope
 In scope: US airports, public aviation data, and questions about congestion, long-haul share, capacity pressure and expansion candidates, with follow-ups ("and what about BOS?").
@@ -67,7 +67,7 @@ All tunable values live in `config.yaml`, with a comment there. This table says 
 | `history_turns` | 6 | Earlier turns kept so "and BOS?" can be resolved. |
 | `remembered_airports` | 8 | Airports named in the follow-up hint about the last turn. |
 | `fallback_max_lines` | 40 | Lines of raw tool figures shown when no wording could be verified. |
-| `llm_max_tokens` | 1024 | Longest model reply; a longer one is treated as cut off and never shown. |
+| `llm_max_tokens` | 2048 | Longest model reply; a longer one is treated as cut off and never shown. |
 | `llm_timeout_seconds`, `llm_retries` | 30, 1 | Per model call. Together with `max_tool_rounds` they set the page's wait time. |
 | `session_ttl_minutes`, `max_sessions` | 60, 200 | An idle conversation is forgotten after the first; past the second, the least recently used goes. |
 | `max_message_chars` | 2000 | Longest question the API accepts. |
@@ -142,7 +142,18 @@ Why these choices:
 - *Unmet demand:* a signal is "strong" when its scaled value passes a threshold from `config.yaml`. If a signal has no data, the answer reads "3 of 4" and names the missing one.
 
 ## 6. Model choice and cost
-Smallest model that passes the eval for each step. The router and agent loop start with a Haiku-class model and escalate only if the evals show a gap. The judge is Sonnet-class and offline only. _Measured table TBD (M6)._
+Smallest model that passes the eval for each step. The router and agent loop start with a Haiku-class model and escalate only if the evals show a gap. The judge is Sonnet-class and offline only.
+
+First measured run (2026-11-06, 44 turns on the recorded snapshots, default prompt, `python -m evals.run --client anthropic --judge`; the ledger row is the source):
+
+| Step | Model | Calls | Tokens in / out | Cost | Per question |
+|---|---|---|---|---|---|
+| Agent loop (routing + wording) | `claude-haiku-5-5` | 95 | 241,379 / 26,543 | $0.037 | $0.00085 |
+| Judge (40 answers) | `claude-sonnet-5-5` | 40 | not recorded | $0.291 | $0.0073 |
+
+Prices are the `model_prices` in `config.yaml`. The judge costs about eight times the agent it grades, so it belongs in offline evals only. A whole eval run costs about $0.33. Judge token counts were not stored separately in the ledger row (only its cost), and the judge is uncalibrated, so its means (answers the question 4.35, no invented information 4.20, states assumptions 3.98, tone 4.75) are advisory.
+
+**This run did not pass.** Under the thresholds in `config.yaml`: `routing_precision` 0.79 (needs 0.90) and `abstention` 0.69 (needs 1.00) failed; `routing_recall` 0.92, `answered_rate` 0.94, `disclosures` 0.94 and `gold_match` 0.94 passed. The failure list in the report (`python -m evals.run --client anthropic --no-ledger`) says which questions; reading it and tuning the prompt or tools is the next step, and each retry costs about $0.04 without the judge. One run is one sample: the model is not deterministic, so a single row does not say how large a change has to be to matter.
 
 ## 7. Evaluation
 `python -m evals.run --client oracle` runs the 40-question set in `evals/questions.yaml` (8 adversarial, 4 follow-ups with two turns each) through the real agent, tools and validator, then scores it with plain code and appends one row to `evals/ledger.jsonl`. It exits 1 if a metric is under its threshold in `config.yaml` (`eval_thresholds`). `--prompt FILE` swaps the system prompt, so two prompts are compared by running each and reading the two ledger rows (the row records the prompt name and a hash of its text). `--no-ledger` prints the report only. `--prompt` is refused for the oracle, which ignores the prompt, so two prompts can never look compared when they were not. Each ledger row has a `model_backed` flag and a `-dirty` suffix on the sha when tracked files differ from the commit. A misspelled key in `questions.yaml` is an error.

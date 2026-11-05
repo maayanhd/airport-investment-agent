@@ -101,5 +101,5 @@ This is a safe demo architecture, not a production service. The following work i
 
   Airport names from datasets are cleaned to plain characters, but that can't stop ordinary words that read like an instruction. So tool output is passed to the model as data under a system instruction not to follow it, and the validator is the backstop. Matching is exact on the rounded values the tools return (a fraction may be quoted as a percent). Dates, years after a preposition, ordinals and plain counts up to 10 are exempt.
 - **Serving:** the model sits behind a small interface and only `anthropic_client.py` knows the vendor format. A reply cut off at the token limit is an error, never a shown answer. Conversations are held in memory, one agent each, and the API has no login, so it is for one analyst on localhost (README section 8).
-- **Models** (`config.yaml`): a Haiku-class router, escalated only if evals show a gap, and a Sonnet-class judge used offline only. _Measured results TBD (README section 6)._
+- **Models** (`config.yaml`): a Haiku-class router, escalated only if evals show a gap, and a Sonnet-class judge used offline only. First measured run: about $0.33 per full eval (agent $0.04, judge $0.29); thresholds not yet met (README section 6).
 - **Build-time AI:** Claude Code with an eval agent and code-review skills. Details are in the README.
